@@ -48,7 +48,7 @@ pgmol = ["py.typed"]
 [tool.pytest.ini_options]
 minversion = "7.4"
 testpaths = ["tests"]
-addopts = "-q --strict-markers --strict-config"
+addopts = "--strict-markers --strict-config"
 filterwarnings = ["error"]
 
 [tool.coverage.run]
