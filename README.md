@@ -188,8 +188,8 @@ Measured on one core (Python 3.10, NumPy 2.2):
 
 | Molecule | Atoms | Group | Time |
 | --- | --- | --- | --- |
-| H2O | 3 | `C2v` | < 1 ms |
-| C6H6 | 12 | `D6h` | ~5 ms |
+| H2O | 3 | `C2v` | ~3 ms |
+| C6H6 | 12 | `D6h` | ~11 ms |
 | B12H12 | 24 | `Ih` | ~85 ms |
 | C60 | 60 | `Ih` | ~1.9 s |
 
