@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 
 from .geometry import (
     IDENTITY,
     INVERSION,
+    FloatArray,
+    IntArray,
     StructureMatcher,
     candidate_directions,
     element_blocks,
@@ -59,10 +62,10 @@ class SymmetryOperation:
         ``"sigma"``, and ``None`` for ``"E"`` and ``"i"``.
     """
 
-    matrix: np.ndarray
+    matrix: FloatArray
     kind: str
     order: int
-    axis: np.ndarray | None
+    axis: FloatArray | None
 
     @property
     def label(self) -> str:
@@ -80,7 +83,7 @@ class SymmetryOperation:
         return self.kind in {"E", "Cn"}
 
 
-def _axis_from_skew(matrix: np.ndarray) -> np.ndarray:
+def _axis_from_skew(matrix: FloatArray) -> FloatArray:
     vector = np.array(
         [
             matrix[2, 1] - matrix[1, 2],
@@ -88,17 +91,17 @@ def _axis_from_skew(matrix: np.ndarray) -> np.ndarray:
             matrix[1, 0] - matrix[0, 1],
         ]
     )
-    return vector / np.linalg.norm(vector)
+    return np.asarray(vector / np.linalg.norm(vector), dtype=np.float64)
 
 
-def _axis_from_projector(projector: np.ndarray) -> np.ndarray:
+def _axis_from_projector(projector: FloatArray) -> FloatArray:
     """Extract the unit vector ``u`` from a rank-one projector ``u u^T``."""
     column = int(np.argmax(np.linalg.norm(projector, axis=0)))
     vector = projector[:, column]
     return vector / np.linalg.norm(vector)
 
 
-def _matrix_order(matrix: np.ndarray, atol: float, limit: int) -> int | None:
+def _matrix_order(matrix: FloatArray, atol: float, limit: int) -> int | None:
     """Smallest ``k <= limit`` with ``matrix ** k == I``, or ``None``.
 
     Every point-group operation has finite order, so ``None`` identifies a
@@ -113,7 +116,7 @@ def _matrix_order(matrix: np.ndarray, atol: float, limit: int) -> int | None:
     return None
 
 
-def _identify_or_none(matrix: np.ndarray, atol: float, limit: int) -> SymmetryOperation | None:
+def _identify_or_none(matrix: FloatArray, atol: float, limit: int) -> SymmetryOperation | None:
     """Like :func:`identify_operation` but returns ``None`` for non-operations."""
     try:
         return identify_operation(matrix, atol=atol, max_order=limit)
@@ -122,7 +125,7 @@ def _identify_or_none(matrix: np.ndarray, atol: float, limit: int) -> SymmetryOp
 
 
 def identify_operation(
-    matrix: np.ndarray, atol: float = 1e-4, max_order: int = _MAX_OPERATION_ORDER
+    matrix: FloatArray, atol: float = 1e-4, max_order: int = _MAX_OPERATION_ORDER
 ) -> SymmetryOperation:
     """Classify an orthogonal ``3x3`` matrix as a point-group operation.
 
@@ -207,10 +210,10 @@ class SymmetryGroup:
         return any(op.kind == "i" for op in self.operations)
 
     @property
-    def mirror_normals(self) -> list[np.ndarray]:
+    def mirror_normals(self) -> list[FloatArray]:
         return [op.axis for op in self.of_kind("sigma") if op.axis is not None]
 
-    def rotation_axes(self) -> list[tuple[np.ndarray, int]]:
+    def rotation_axes(self) -> list[tuple[FloatArray, int]]:
         """Distinct proper-rotation axes paired with their highest order.
 
         Axes are compared up to sign and merged within the group's angular
@@ -218,7 +221,7 @@ class SymmetryGroup:
         """
         return _collect_axes(self.of_kind("Cn"), self.angular_tolerance)
 
-    def improper_axes(self) -> list[tuple[np.ndarray, int]]:
+    def improper_axes(self) -> list[tuple[FloatArray, int]]:
         """Distinct ``S_n`` axes paired with the highest operation order."""
         return _collect_axes(self.of_kind("Sn"), self.angular_tolerance)
 
@@ -232,7 +235,7 @@ class SymmetryGroup:
 
 def _collect_axes(
     operations: Sequence[SymmetryOperation], angular_tolerance: float
-) -> list[tuple[np.ndarray, int]]:
+) -> list[tuple[FloatArray, int]]:
     """Merge operations sharing an axis, keeping the highest order on each.
 
     Every operation passed in must carry an axis, which is true of the
@@ -240,21 +243,23 @@ def _collect_axes(
     to sign, so ``u`` and ``-u`` count once.
     """
     cos_cut = math.cos(angular_tolerance)
-    axes: list[list] = []
+    axes: list[tuple[FloatArray, int]] = []
     for op in operations:
-        for entry in axes:
-            if abs(float(np.dot(entry[0], op.axis))) >= cos_cut:
-                entry[1] = max(entry[1], op.order)
+        # Only "Cn" and "Sn" reach here, and both always carry an axis.
+        axis = cast(FloatArray, op.axis)
+        for index, (known, order) in enumerate(axes):
+            if abs(float(np.dot(known, axis))) >= cos_cut:
+                axes[index] = (known, max(order, op.order))
                 break
         else:
-            axes.append([np.asarray(op.axis, dtype=float), op.order])
-    return [(axis, order) for axis, order in axes]
+            axes.append((np.asarray(axis, dtype=np.float64), op.order))
+    return axes
 
 
 def accept_operation(
-    coordinates: np.ndarray,
+    coordinates: FloatArray,
     matcher: StructureMatcher,
-    permutation: np.ndarray,
+    permutation: IntArray,
     sign: int,
     *,
     identify_atol: float,
@@ -288,7 +293,7 @@ def accept_operation(
 
 def detect_operations(
     symbols: Sequence[str],
-    coordinates: np.ndarray,
+    coordinates: FloatArray,
     tolerance: float,
 ) -> SymmetryGroup:
     """Find every symmetry operation of a centred, non-linear molecule.
@@ -328,13 +333,13 @@ def detect_operations(
     identify_atol = max(1e-4, angular_tolerance)
 
     operations: list[SymmetryOperation] = []
-    permutations: list[np.ndarray] = []
+    permutations: list[IntArray] = []
     signs: list[int] = []
     # An operation is identified exactly by the permutation it induces
     # together with its determinant sign, so this needs no tolerance.
     verdicts: dict[tuple[int, ...], bool] = {}
 
-    def register(permutation: np.ndarray, sign: int) -> bool:
+    def register(permutation: IntArray, sign: int) -> bool:
         """Accept the operation with this permutation; report acceptance."""
         key = (sign, *(int(value) for value in permutation))
         cached = verdicts.get(key)
@@ -356,7 +361,7 @@ def detect_operations(
         verdicts[key] = operation is not None
         return operation is not None
 
-    def consider(matrix: np.ndarray) -> bool:
+    def consider(matrix: FloatArray) -> bool:
         permutation = matcher.permutation(matrix)
         if permutation is None:
             return False
@@ -378,7 +383,12 @@ def detect_operations(
     )
 
 
-def _close_under_composition(operations, permutations, signs, register) -> bool:
+def _close_under_composition(
+    operations: list[SymmetryOperation],
+    permutations: list[IntArray],
+    signs: list[int],
+    register: Callable[[IntArray, int], bool],
+) -> bool:
     """Extend the operation list with products; report whether the set closed.
 
     Composing two operations is pure index arithmetic on their permutations
@@ -415,12 +425,12 @@ def _angular_tolerance(tolerance: float, radius: float) -> float:
 
 
 def _axis_candidates(
-    coordinates: np.ndarray,
-    blocks: dict[str, np.ndarray],
-    axis: np.ndarray,
+    coordinates: FloatArray,
+    blocks: dict[str, IntArray],
+    axis: FloatArray,
     tolerance: float,
-    norms_squared: np.ndarray,
-) -> Iterator[np.ndarray]:
+    norms_squared: FloatArray,
+) -> Iterator[FloatArray]:
     """Yield every rotation and improper rotation about ``axis`` worth testing.
 
     Rather than guessing rotation orders, the angles are read off the
@@ -440,7 +450,7 @@ def _axis_candidates(
 
     # Use the element with the fewest off-axis atoms: it yields the fewest
     # candidate angles while still constraining the operation completely.
-    chosen: np.ndarray | None = None
+    chosen: IntArray | None = None
     for indices in blocks.values():
         off_axis = indices[radius_squared[indices] > tolerance_squared]
         if len(off_axis) == 0:

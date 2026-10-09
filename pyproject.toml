@@ -30,6 +30,7 @@ dev = [
   "pytest>=7.4",
   "pytest-cov>=4.1",
   "ruff>=0.6",
+  "mypy>=1.11",
 ]
 
 [project.scripts]
@@ -63,6 +64,13 @@ exclude_lines = [
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/pgmol"]
+strict = true
+# NumPy's own stubs are the only source of Any in this package.
+disallow_any_expr = false
 
 [tool.ruff]
 line-length = 95

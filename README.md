@@ -203,7 +203,11 @@ $ pip install -e ".[dev]"
 $ pytest                                   # full suite
 $ pytest --cov=pgmol --cov-report=term-missing
 $ ruff check src tests && ruff format --check src tests
+$ mypy --strict src/pgmol
 ```
+
+The package ships `py.typed`, and the annotations are checked under
+`mypy --strict` in CI.
 
 The suite covers:
 

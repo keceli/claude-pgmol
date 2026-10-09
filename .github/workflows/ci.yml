@@ -106,3 +106,5 @@ jobs:
         run: ruff check src tests
       - name: ruff format
         run: ruff format --check src tests
+      - name: mypy
+        run: mypy --strict src/pgmol

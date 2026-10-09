@@ -35,6 +35,7 @@ import numpy as np
 
 from .elements import canonical_symbol
 from .errors import XYZFormatError
+from .geometry import FloatArray
 
 __all__ = ["Molecule", "parse_xyz", "read_xyz"]
 
@@ -57,7 +58,7 @@ class Molecule:
     """
 
     symbols: tuple[str, ...]
-    coordinates: np.ndarray
+    coordinates: FloatArray
     comment: str = ""
 
     def __post_init__(self) -> None:
@@ -262,7 +263,7 @@ def read_xyz(path: str | Path) -> Molecule:
 
 
 def molecule_from_coordinates(
-    symbols: Sequence[str], coordinates: np.ndarray | Sequence[Sequence[float]]
+    symbols: Sequence[str], coordinates: FloatArray | Sequence[Sequence[float]]
 ) -> Molecule:
     """Build a :class:`Molecule` from in-memory symbols and coordinates.
 

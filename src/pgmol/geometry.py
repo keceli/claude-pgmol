@@ -12,11 +12,22 @@ from dataclasses import dataclass
 from itertools import combinations
 
 import numpy as np
+import numpy.typing as npt
+
+#: A ``(..., 3)`` array of Cartesian coordinates or direction vectors.
+FloatArray = npt.NDArray[np.float64]
+#: An array of atom indices.
+IntArray = npt.NDArray[np.int_]
+#: Anything that can stand in for a single 3-vector.
+VectorLike = Sequence[float] | FloatArray
 
 __all__ = [
     "IDENTITY",
     "INVERSION",
+    "FloatArray",
+    "IntArray",
     "StructureMatcher",
+    "VectorLike",
     "candidate_directions",
     "centered",
     "centroid",
@@ -38,7 +49,7 @@ INVERSION = -np.eye(3)
 _DIRECTION_EPS = 1e-9
 
 
-def centroid(coordinates: np.ndarray) -> np.ndarray:
+def centroid(coordinates: FloatArray) -> FloatArray:
     """Return the unweighted centroid of ``coordinates``.
 
     Every symmetry operation of a molecule permutes atoms of the same element,
@@ -47,16 +58,16 @@ def centroid(coordinates: np.ndarray) -> np.ndarray:
     group and a valid origin for the symmetry search, without needing atomic
     masses.
     """
-    return np.asarray(coordinates, dtype=float).mean(axis=0)
+    return np.asarray(np.asarray(coordinates, dtype=np.float64).mean(axis=0), dtype=np.float64)
 
 
-def centered(coordinates: np.ndarray) -> np.ndarray:
+def centered(coordinates: FloatArray) -> FloatArray:
     """Return a copy of ``coordinates`` translated so its centroid is at the origin."""
-    coords = np.asarray(coordinates, dtype=float)
-    return coords - coords.mean(axis=0)
+    coords = np.asarray(coordinates, dtype=np.float64)
+    return np.asarray(coords - coords.mean(axis=0), dtype=np.float64)
 
 
-def is_linear(coordinates: np.ndarray, tolerance: float) -> bool:
+def is_linear(coordinates: FloatArray, tolerance: float) -> bool:
     """Return ``True`` when every atom lies within ``tolerance`` of one line.
 
     ``coordinates`` must already be centred.  A single atom counts as linear
@@ -70,7 +81,7 @@ def is_linear(coordinates: np.ndarray, tolerance: float) -> bool:
     return bool(np.linalg.norm(perpendicular, axis=1).max() <= tolerance)
 
 
-def principal_axes(coordinates: np.ndarray) -> np.ndarray:
+def principal_axes(coordinates: FloatArray) -> FloatArray:
     """Return three orthonormal axes ordered by decreasing spatial extent.
 
     These are the right singular vectors of the centred coordinate matrix,
@@ -85,7 +96,7 @@ def principal_axes(coordinates: np.ndarray) -> np.ndarray:
     return np.asarray(vt, dtype=float)
 
 
-def element_blocks(symbols: Sequence[str]) -> dict[str, np.ndarray]:
+def element_blocks(symbols: Sequence[str]) -> dict[str, IntArray]:
     """Group atom indices by element symbol, preserving first-seen order."""
     blocks: dict[str, list[int]] = {}
     for index, symbol in enumerate(symbols):
@@ -94,7 +105,7 @@ def element_blocks(symbols: Sequence[str]) -> dict[str, np.ndarray]:
 
 
 def minimum_equivalent_separation(
-    coordinates: np.ndarray, blocks: dict[str, np.ndarray]
+    coordinates: FloatArray, blocks: dict[str, IntArray]
 ) -> float:
     """Shortest distance between two atoms of the same element.
 
@@ -113,22 +124,22 @@ def minimum_equivalent_separation(
     return shortest
 
 
-def _normalize(vectors: np.ndarray) -> np.ndarray:
+def _normalize(vectors: FloatArray) -> FloatArray:
     norms = np.linalg.norm(vectors, axis=-1, keepdims=True)
-    return vectors / norms
+    return np.asarray(vectors / norms, dtype=np.float64)
 
 
-def _canonical_sign(directions: np.ndarray) -> np.ndarray:
+def _canonical_sign(directions: FloatArray) -> FloatArray:
     """Flip each row so its largest-magnitude component is positive."""
     leading = np.argmax(np.abs(directions), axis=1)
     signs = np.sign(directions[np.arange(len(directions)), leading])
     signs[signs == 0.0] = 1.0
-    return directions * signs[:, None]
+    return np.asarray(directions * signs[:, None], dtype=np.float64)
 
 
 def deduplicate_directions(
     directions: Iterable[Sequence[float]], angular_tolerance: float
-) -> np.ndarray:
+) -> FloatArray:
     """Collapse a list of direction vectors to distinct axes.
 
     Vectors are compared as *axes*: ``u`` and ``-u`` are the same direction.
@@ -138,19 +149,19 @@ def deduplicate_directions(
     inputs; without it the quadratic all-pairs comparison dominates the whole
     analysis for molecules with many equivalent atoms.
     """
-    stacked = np.asarray(list(directions), dtype=float).reshape(-1, 3)
+    stacked: FloatArray = np.asarray(list(directions), dtype=np.float64).reshape(-1, 3)
     if len(stacked) == 0:
         return np.zeros((0, 3))
     stacked = stacked[np.linalg.norm(stacked, axis=1) > _DIRECTION_EPS]
     if len(stacked) == 0:
         return np.zeros((0, 3))
-    stacked = _canonical_sign(_normalize(stacked))
+    stacked = np.asarray(_canonical_sign(_normalize(stacked)), dtype=np.float64)
 
     cell_size = max(angular_tolerance, 1e-9)
     cos_cut = np.cos(cell_size)
     cells = np.floor(stacked / cell_size).astype(np.int64)
-    buckets: dict[tuple[int, int, int], list[np.ndarray]] = {}
-    unique: list[np.ndarray] = []
+    buckets: dict[tuple[int, int, int], list[FloatArray]] = {}
+    unique: list[FloatArray] = []
     neighbourhood = [
         (dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
     ]
@@ -171,8 +182,8 @@ def deduplicate_directions(
 
 
 def _reference_atoms(
-    coordinates: np.ndarray, blocks: dict[str, np.ndarray], count: int = 3
-) -> np.ndarray:
+    coordinates: FloatArray, blocks: dict[str, IntArray], count: int = 3
+) -> IntArray:
     """Pick a few atoms that constrain any symmetry axis, deterministically.
 
     The element with the fewest off-centre atoms is used, because the work
@@ -182,7 +193,7 @@ def _reference_atoms(
     the XYZ lines.
     """
     radii = np.linalg.norm(coordinates, axis=1)
-    smallest: np.ndarray | None = None
+    smallest: IntArray | None = None
     for indices in blocks.values():
         off_centre = indices[radii[indices] > _DIRECTION_EPS]
         if len(off_centre) < 2:
@@ -199,10 +210,10 @@ def _reference_atoms(
 
 
 def _axes_through_no_atom(
-    coordinates: np.ndarray,
-    blocks: dict[str, np.ndarray],
+    coordinates: FloatArray,
+    blocks: dict[str, IntArray],
     tolerance: float,
-) -> list[np.ndarray]:
+) -> list[FloatArray]:
     """Candidate axes derived from how a rotation must displace atoms.
 
     A rotation about ``u`` moves every atom ``a`` perpendicular to ``u``, so
@@ -216,27 +227,28 @@ def _axes_through_no_atom(
     if len(references) < 2:
         return []
     radii = np.linalg.norm(coordinates, axis=1)
-    by_atom: dict[int, np.ndarray] = {}
+    by_atom: dict[int, FloatArray] = {}
     for atom in references:
         partners = next(idx for idx in blocks.values() if atom in idx)
         plausible = partners[np.abs(radii[partners] - radii[atom]) <= tolerance]
         by_atom[int(atom)] = coordinates[plausible] - coordinates[atom]
-    out: list[np.ndarray] = []
+    out: list[FloatArray] = []
     for first, second in combinations([int(a) for a in references], 2):
         # Each atom is always its own candidate image, so neither set is
         # ever empty; the zero vectors it contributes are dropped when the
         # directions are normalised.
         left, right = by_atom[first], by_atom[second]
-        out.append(np.cross(left[:, None, :], right[None, :, :]).reshape(-1, 3))
+        crossed = np.cross(left[:, None, :], right[None, :, :])
+        out.append(np.asarray(crossed.reshape(-1, 3), dtype=np.float64))
     return out
 
 
 def candidate_directions(
-    coordinates: np.ndarray,
-    blocks: dict[str, np.ndarray],
+    coordinates: FloatArray,
+    blocks: dict[str, IntArray],
     angular_tolerance: float,
     tolerance: float = 0.0,
-) -> np.ndarray:
+) -> FloatArray:
     """Enumerate directions that could carry a symmetry element.
 
     ``coordinates`` must be centred.  The returned unit vectors cover
@@ -260,7 +272,7 @@ def candidate_directions(
     units = np.zeros_like(coords)
     units[off_center] = coords[off_center] / radii[off_center, None]
 
-    pool: list[np.ndarray] = [units[off_center]]
+    pool: list[FloatArray] = [units[off_center]]
     for indices in blocks.values():
         usable = [i for i in indices if off_center[i]]
         if len(usable) < 2:
@@ -277,27 +289,28 @@ def candidate_directions(
     return deduplicate_directions(np.concatenate(pool, axis=0), angular_tolerance)
 
 
-def rotation_matrix(axis: Sequence[float], angle: float) -> np.ndarray:
+def rotation_matrix(axis: VectorLike, angle: float) -> FloatArray:
     """Proper rotation by ``angle`` radians about ``axis`` (right-handed)."""
     unit = np.asarray(axis, dtype=float)
     unit = unit / np.linalg.norm(unit)
     x, y, z = unit
     cross = np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
-    return (
+    matrix = (
         np.cos(angle) * IDENTITY
         + np.sin(angle) * cross
         + (1.0 - np.cos(angle)) * np.outer(unit, unit)
     )
+    return np.asarray(matrix, dtype=np.float64)
 
 
-def reflection_matrix(normal: Sequence[float]) -> np.ndarray:
+def reflection_matrix(normal: VectorLike) -> FloatArray:
     """Reflection in the plane through the origin with the given ``normal``."""
     unit = np.asarray(normal, dtype=float)
     unit = unit / np.linalg.norm(unit)
     return IDENTITY - 2.0 * np.outer(unit, unit)
 
 
-def improper_rotation_matrix(axis: Sequence[float], angle: float) -> np.ndarray:
+def improper_rotation_matrix(axis: VectorLike, angle: float) -> FloatArray:
     """Rotation by ``angle`` about ``axis`` followed by reflection across it.
 
     ``improper_rotation_matrix(u, 2*pi/n)`` is the operation ``S_n``.
@@ -319,8 +332,8 @@ class StructureMatcher:
     ambiguous and operations are rejected conservatively.
     """
 
-    coordinates: np.ndarray
-    blocks: dict[str, np.ndarray]
+    coordinates: FloatArray
+    blocks: dict[str, IntArray]
     tolerance: float
 
     #: Atoms used for the cheap pre-check that rejects most candidates.
@@ -340,7 +353,7 @@ class StructureMatcher:
         self._probe_block = block.T.copy()
         self._probe_squared = squared
 
-    def permutation(self, matrix: np.ndarray) -> np.ndarray | None:
+    def permutation(self, matrix: FloatArray) -> IntArray | None:
         """Return the atom permutation induced by ``matrix``, or ``None``.
 
         ``result[i] == j`` means ``matrix`` carries atom ``i`` onto atom
@@ -379,14 +392,14 @@ class StructureMatcher:
             mapping[indices] = indices[nearest]
         return mapping
 
-    def matches(self, matrix: np.ndarray) -> bool:
+    def matches(self, matrix: FloatArray) -> bool:
         """Return ``True`` when ``matrix`` is a symmetry operation of the molecule."""
         return self.permutation(matrix) is not None
 
 
 def fit_orthogonal(
-    coordinates: np.ndarray, permutation: np.ndarray, determinant_sign: int
-) -> np.ndarray:
+    coordinates: FloatArray, permutation: IntArray, determinant_sign: int
+) -> FloatArray:
     """Least-squares orthogonal matrix carrying each atom onto its image.
 
     Given the permutation an approximate operation induces, this returns the
@@ -406,4 +419,4 @@ def fit_orthogonal(
     left, _, right = np.linalg.svd(covariance)
     correction = determinant_sign * np.sign(np.linalg.det(left) * np.linalg.det(right))
     middle = np.diag([1.0, 1.0, float(correction)])
-    return right.T @ middle @ left.T
+    return np.asarray(right.T @ middle @ left.T, dtype=np.float64)

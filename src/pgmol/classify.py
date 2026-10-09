@@ -7,6 +7,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from .geometry import FloatArray
 from .symmetry import SymmetryGroup
 
 __all__ = ["SUPPORTED_LABELS", "classify_group", "expected_order"]
@@ -31,20 +32,20 @@ SUPPORTED_LABELS = (
 )
 
 
-def _parallel(first: np.ndarray, second: np.ndarray, cos_cut: float) -> bool:
+def _parallel(first: FloatArray, second: FloatArray, cos_cut: float) -> bool:
     return abs(float(np.dot(first, second))) >= cos_cut
 
 
-def _perpendicular(first: np.ndarray, second: np.ndarray, sin_cut: float) -> bool:
+def _perpendicular(first: FloatArray, second: FloatArray, sin_cut: float) -> bool:
     return abs(float(np.dot(first, second))) <= sin_cut
 
 
 def _select_principal_axis(
-    axes: Sequence[tuple[np.ndarray, int]],
+    axes: Sequence[tuple[FloatArray, int]],
     group: SymmetryGroup,
     cos_cut: float,
     sin_cut: float,
-) -> tuple[np.ndarray, int]:
+) -> tuple[FloatArray, int]:
     """Pick the principal axis among those of maximal rotation order.
 
     ``D2d`` is the case that matters: all three of its axes are ``C2`` axes
@@ -61,7 +62,7 @@ def _select_principal_axis(
     improper = group.improper_axes()
     mirrors = group.mirror_normals
 
-    def sort_key(entry: tuple[np.ndarray, int]) -> tuple:
+    def sort_key(entry: tuple[FloatArray, int]) -> tuple[int, int, int, tuple[float, ...]]:
         axis = entry[0]
         improper_order = max(
             (order for other, order in improper if _parallel(axis, other, cos_cut)),
@@ -138,7 +139,7 @@ def classify_group(group: SymmetryGroup) -> str:
 
 
 def _classify_polyhedral(
-    axes: Sequence[tuple[np.ndarray, int]], has_inversion: bool, has_mirror: bool
+    axes: Sequence[tuple[FloatArray, int]], has_inversion: bool, has_mirror: bool
 ) -> str:
     """Name a group with more than one axis of order three or higher."""
     if sum(1 for _, order in axes if order == 5) >= 6:

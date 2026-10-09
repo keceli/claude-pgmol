@@ -7,12 +7,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-import numpy as np
-
 from .classify import classify_group, expected_order
 from .errors import SymmetryError
 from .geometry import (
     INVERSION,
+    FloatArray,
+    IntArray,
     StructureMatcher,
     centered,
     element_blocks,
@@ -87,7 +87,7 @@ def _validate_tolerance(tolerance: float) -> float:
 
 
 def _effective_tolerance(
-    coordinates: np.ndarray, blocks: dict[str, np.ndarray], tolerance: float
+    coordinates: FloatArray, blocks: dict[str, IntArray], tolerance: float
 ) -> float:
     """Cap ``tolerance`` so that atom-to-atom matching stays unambiguous."""
     separation = minimum_equivalent_separation(coordinates, blocks)
@@ -179,7 +179,7 @@ def find_point_group(path: str | Path, tolerance: float = DEFAULT_TOLERANCE) -> 
 
 def point_group_from_coordinates(
     symbols: Sequence[str],
-    coordinates: np.ndarray | Sequence[Sequence[float]],
+    coordinates: FloatArray | Sequence[Sequence[float]],
     tolerance: float = DEFAULT_TOLERANCE,
 ) -> str:
     """Return the Schoenflies point group of an in-memory geometry.
