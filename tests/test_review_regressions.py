@@ -286,3 +286,55 @@ def test_minimum_separation_grid_picks_the_closest_of_several_neighbours() -> No
     coordinates[3] = coordinates[0] + np.array([0.0, 0.0, 0.14])
     blocks = element_blocks(["C"] * 300)
     assert minimum_equivalent_separation(coordinates, blocks, limit=0.2) == pytest.approx(0.04)
+
+
+# --- secondary findings ---------------------------------------------------
+
+
+def test_a_closed_pipe_is_not_a_crash() -> None:
+    """`pgmol f.xyz | head -0` used to print a traceback and exit 120.
+
+    Run in a subprocess with a genuinely closed pipe: the handler redirects
+    the process's stdout descriptor, which must not happen inside pytest.
+    """
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        f"{sys.executable} -m pgmol.cli core_xyz/CH4_Td.xyz | head -0",
+        shell=True,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(Path(__file__).resolve().parent.parent),
+    )
+    assert "Traceback" not in completed.stderr
+    assert "BrokenPipe" not in completed.stderr
+
+
+@pytest.mark.parametrize("builder", ["rotation", "reflection"])
+def test_a_zero_length_axis_is_rejected_not_silently_nan(builder: str) -> None:
+    from pgmol.geometry import reflection_matrix, rotation_matrix
+
+    with pytest.raises(ValueError, match="non-zero length"):
+        if builder == "rotation":
+            rotation_matrix([0.0, 0.0, 0.0], 1.0)
+        else:
+            reflection_matrix([0.0, 0.0, 0.0])
+
+
+def test_shared_matrix_constants_cannot_be_mutated() -> None:
+    """They are module globals; an in-place write would poison the process."""
+    from pgmol.geometry import IDENTITY, INVERSION
+
+    for constant in (IDENTITY, INVERSION):
+        assert not constant.flags.writeable
+        with pytest.raises(ValueError):
+            constant[0, 0] = 5.0
+
+
+def test_empty_label_is_a_value_error() -> None:
+    from pgmol.classify import expected_order
+
+    with pytest.raises(ValueError, match="unrecognised"):
+        expected_order("")

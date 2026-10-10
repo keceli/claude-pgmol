@@ -175,6 +175,8 @@ def expected_order(label: str) -> int | None:
         return fixed[label]
     if label in {"Kh", "Cinfv", "Dinfh"}:
         return None
+    if not label:
+        raise ValueError("unrecognised Schoenflies label ''")
     family = label[0]
     suffix = label[-1] if label[-1].isalpha() else ""
     digits = label[1 : len(label) - len(suffix)]

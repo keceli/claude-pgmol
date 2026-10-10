@@ -43,6 +43,10 @@ __all__ = [
 
 IDENTITY = np.eye(3)
 INVERSION = -np.eye(3)
+# Shared module-level constants: making them read-only stops an accidental
+# in-place write from silently changing every result in the process.
+IDENTITY.flags.writeable = False
+INVERSION.flags.writeable = False
 
 #: Directions shorter than this (after normalising inputs) are discarded as
 #: numerically meaningless rather than normalised into noise.
@@ -347,10 +351,24 @@ def candidate_directions(
     return deduplicate_directions(np.concatenate(pool, axis=0), angular_tolerance)
 
 
+def _unit(vector: VectorLike) -> FloatArray:
+    """Normalise a 3-vector, rejecting one with no direction."""
+    array = np.asarray(vector, dtype=np.float64)
+    norm = float(np.linalg.norm(array))
+    if norm <= _DIRECTION_EPS:
+        raise ValueError("a direction vector must have non-zero length")
+    return np.asarray(array / norm, dtype=np.float64)
+
+
 def rotation_matrix(axis: VectorLike, angle: float) -> FloatArray:
-    """Proper rotation by ``angle`` radians about ``axis`` (right-handed)."""
-    unit = np.asarray(axis, dtype=float)
-    unit = unit / np.linalg.norm(unit)
+    """Proper rotation by ``angle`` radians about ``axis`` (right-handed).
+
+    Raises
+    ------
+    ValueError
+        If ``axis`` has zero length and so names no direction.
+    """
+    unit = _unit(axis)
     x, y, z = unit
     cross = np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
     matrix = (
@@ -362,10 +380,15 @@ def rotation_matrix(axis: VectorLike, angle: float) -> FloatArray:
 
 
 def reflection_matrix(normal: VectorLike) -> FloatArray:
-    """Reflection in the plane through the origin with the given ``normal``."""
-    unit = np.asarray(normal, dtype=float)
-    unit = unit / np.linalg.norm(unit)
-    return IDENTITY - 2.0 * np.outer(unit, unit)
+    """Reflection in the plane through the origin with the given ``normal``.
+
+    Raises
+    ------
+    ValueError
+        If ``normal`` has zero length and so names no plane.
+    """
+    unit = _unit(normal)
+    return np.asarray(IDENTITY - 2.0 * np.outer(unit, unit), dtype=np.float64)
 
 
 def improper_rotation_matrix(axis: VectorLike, angle: float) -> FloatArray:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 
@@ -15,6 +16,10 @@ __all__ = ["build_parser", "main"]
 
 #: Exit status used for unreadable, malformed or unanalysable input.
 EXIT_INPUT_ERROR = 1
+
+#: Exit status when the reader closes the pipe first, as `pgmol f.xyz | head`
+#: does.  128 + SIGPIPE is the shell convention.
+EXIT_BROKEN_PIPE = 141
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +51,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the command-line interface and return a process exit status."""
+    try:
+        return _run(argv)
+    except BrokenPipeError:  # pragma: no cover - see the note below
+        # The reader went away.  Point stdout at the void so the
+        # interpreter's final flush cannot raise a second time, then exit
+        # the way a signalled process would.
+        #
+        # Not measurable in-process: redirecting this process's stdout
+        # descriptor would detach pytest's own capture for the rest of the
+        # session.  test_review_regressions.py drives it through a real
+        # subprocess pipe instead.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return EXIT_BROKEN_PIPE
+
+
+def _run(argv: Sequence[str] | None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 

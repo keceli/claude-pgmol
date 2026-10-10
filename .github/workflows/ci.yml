@@ -72,7 +72,9 @@ jobs:
           failures=0
           for file in core_xyz/*.xyz; do
             expected="${file##*_}"; expected="${expected%.xyz}"
-            actual="$(pgmol "$file")"
+            # Keep going when a fixture crashes: under `set -e` a failing
+            # command substitution would abort the loop and print nothing.
+            actual="$(pgmol "$file" 2>&1)" || actual="<pgmol exited $?>"
             if [ "$actual" != "$expected" ]; then
               echo "::error file=$file::expected $expected, got $actual"
               failures=$((failures + 1))
