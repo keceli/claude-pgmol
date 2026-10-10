@@ -282,8 +282,13 @@ def _axes_through_no_atom(
     ``u`` is perpendicular to ``a - R a``.  Two atoms whose images are both
     unknown therefore pin ``u`` down to ``(a_p - b) x (a_q - c)`` for some
     candidate images ``b`` and ``c``.  These are the only axes that no atom
-    and no atom pair points at -- the ``C3`` axes of a chiral tetrahedral
-    group and the ``C5`` axes of a chiral icosahedral group, for instance.
+    and no atom pair points at.  Measured by ablation, the groups that
+    actually depend on it are the tetrahedral pair ``T`` and ``Th``: their
+    ``C3`` axes run through face centres rather than through atoms, and
+    neither has the mirrors whose normals would otherwise supply the
+    generators.  ``O``, ``Oh``, ``Td``, ``I`` and ``Ih`` are recovered
+    without it, because closure builds their ``C3`` axes from the ``C4``,
+    ``C5`` or mirror operations that atom and pair directions do find.
     """
     references = _reference_atoms(coordinates, blocks)
     if len(references) < 2:

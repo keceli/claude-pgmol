@@ -248,8 +248,8 @@ implies, and the set must be closed under composition.
 3. Enumerate candidate axes from the geometry: atom directions, and for each
    same-element pair the bisector, the difference and the common normal, plus
    the principal axes of the gyration tensor. Axes that pass through no atom
-   — the `C3` axes of a chiral tetrahedral group, the `C5` axes of a chiral
-   icosahedral one — are reconstructed from the displacements a rotation must
+   — in practice the `C3` axes of `T` and `Th`, which run through face
+   centres — are reconstructed from the displacements a rotation must
    produce: `u` is perpendicular to `a - Ra` for every atom `a`.
 4. For each axis, read the candidate rotation angles straight off the
    geometry instead of guessing orders: a symmetry operation must carry a
