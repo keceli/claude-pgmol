@@ -139,13 +139,16 @@ def canonical_symbol(token: str) -> str | None:
     """Return the canonical element symbol for ``token``, or ``None``.
 
     Accepts an element symbol in any capitalisation (``"cl"``, ``"CL"``,
-    ``"Cl"``) and an atomic number written as a plain integer (``"17"``).
-    Returns ``None`` when the token names no element in 1-118.
+    ``"Cl"``) and an atomic number written as plain ASCII digits (``"17"``).
+    Returns ``None`` when the token names no element in 1-118, including for
+    non-ASCII digit characters such as superscripts.
     """
     stripped = token.strip()
     if not stripped:
         return None
-    if stripped.isdigit():
+    # str.isdigit() accepts superscripts and non-ASCII digit scripts that
+    # int() either rejects or silently reinterprets, so require plain ASCII.
+    if stripped.isascii() and stripped.isdigit():
         number = int(stripped)
         if 1 <= number <= len(ELEMENT_SYMBOLS):
             return ELEMENT_SYMBOLS[number - 1]

@@ -36,12 +36,18 @@ import numpy as np
 
 from .elements import canonical_symbol
 from .errors import XYZFormatError
-from .geometry import FloatArray
+from .geometry import FloatArray, _grid_key
 
 __all__ = ["Molecule", "parse_xyz", "read_xyz"]
 
 #: Two atoms closer than this (ångström) are treated as a corrupt geometry.
 _COINCIDENT_ATOM_DISTANCE = 1e-5
+
+#: Largest coordinate magnitude accepted.  Far beyond any real structure,
+#: but low enough that squaring and accumulating coordinates stays well
+#: inside the float64 range: past roughly 1e150 the SVDs in the symmetry
+#: search stop converging and the grid below overflows to infinity.
+_MAX_COORDINATE = 1e100
 
 
 @dataclass(frozen=True, eq=False)
@@ -80,9 +86,16 @@ class Molecule:
             raise ValueError("a molecule must contain at least one atom")
         if not bool(np.all(np.isfinite(coords))):
             raise ValueError("coordinates must all be finite")
+        if bool(np.any(np.abs(coords) > _MAX_COORDINATE)):
+            raise ValueError(
+                f"coordinates must be smaller than {_MAX_COORDINATE:g} A in "
+                "magnitude; larger values are not physical and overflow the "
+                "symmetry search"
+            )
         coords.flags.writeable = False
         object.__setattr__(self, "coordinates", coords)
         object.__setattr__(self, "symbols", tuple(self.symbols))
+        _reject_coincident_atoms(coords)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Molecule):
@@ -92,7 +105,10 @@ class Molecule:
         )
 
     def __hash__(self) -> int:
-        return hash((self.symbols, self.coordinates.tobytes()))
+        # Adding zero folds -0.0 onto 0.0.  np.array_equal treats the two as
+        # equal, so without this a molecule and its reflection in its own
+        # plane would compare equal but hash differently.
+        return hash((self.symbols, (self.coordinates + 0.0).tobytes()))
 
     def __len__(self) -> int:
         return len(self.symbols)
@@ -134,15 +150,13 @@ def _parse_coordinate(token: str, source: str | None, line_number: int) -> float
     return value
 
 
-def _check_distinct(molecule: Molecule, source: str | None) -> None:
+def _reject_coincident_atoms(coords: FloatArray) -> None:
     """Reject a geometry in which two atoms sit on top of each other.
 
     Uses a uniform grid rather than all pairs, so a large file costs linear
     time and memory; the all-pairs form needed ``24 * natoms**2`` bytes and
-    exhausted memory on structures of a few thousand atoms before any
-    symmetry analysis could run.
+    exhausted memory on structures of a few thousand atoms.
     """
-    coords = molecule.coordinates
     if len(coords) < 2:
         return
     cell = _COINCIDENT_ATOM_DISTANCE
@@ -151,11 +165,7 @@ def _check_distinct(molecule: Molecule, source: str | None) -> None:
     ]
     buckets: dict[tuple[int, int, int], list[int]] = {}
     for index, position in enumerate(coords):
-        key = (
-            math.floor(position[0] / cell),
-            math.floor(position[1] / cell),
-            math.floor(position[2] / cell),
-        )
+        key = _grid_key(position, cell)
         for offset in neighbourhood:
             neighbours = buckets.get(
                 (key[0] + offset[0], key[1] + offset[1], key[2] + offset[2])
@@ -165,12 +175,10 @@ def _check_distinct(molecule: Molecule, source: str | None) -> None:
             for other in neighbours:
                 separation = float(np.linalg.norm(coords[other] - position))
                 if separation < cell:
-                    raise _fail(
-                        source,
-                        None,
+                    raise ValueError(
                         f"atoms {other + 1} and {index + 1} are coincident "
                         f"(separation {separation:.2e} A); the geometry is not "
-                        "a valid molecule",
+                        "a valid molecule"
                     )
         buckets.setdefault(key, []).append(index)
 
@@ -270,13 +278,14 @@ def parse_xyz(text: str, *, source: str | None = None) -> Molecule:
                 f"({extra.strip()!r}); multi-frame XYZ files are not supported",
             )
 
-    molecule = Molecule(
-        symbols=tuple(symbols),
-        coordinates=np.asarray(positions, dtype=float).reshape(natoms, 3),
-        comment=comment,
-    )
-    _check_distinct(molecule, source)
-    return molecule
+    try:
+        return Molecule(
+            symbols=tuple(symbols),
+            coordinates=np.asarray(positions, dtype=float).reshape(natoms, 3),
+            comment=comment,
+        )
+    except ValueError as exc:
+        raise _fail(source, None, str(exc)) from exc
 
 
 def read_xyz(path: str | Path) -> Molecule:
@@ -312,6 +321,13 @@ def molecule_from_coordinates(
     """Build a :class:`Molecule` from in-memory symbols and coordinates.
 
     The input array is copied, so the caller's data is never mutated.
+
+    Raises
+    ------
+    XYZFormatError
+        If a symbol names no element, or the coordinates are not a numeric
+        ``(natoms, 3)`` array of finite, physically sized values, or two
+        atoms coincide.
     """
     canonical: list[str] = []
     for index, token in enumerate(symbols):
@@ -319,17 +335,11 @@ def molecule_from_coordinates(
         if symbol is None:
             raise XYZFormatError(f"unknown element symbol {token!r} at index {index}")
         canonical.append(symbol)
-    array = np.array(coordinates, dtype=float)
-    if array.ndim != 2 or array.shape[1] != 3:
-        raise XYZFormatError(f"coordinates must have shape (natoms, 3), got {array.shape}")
-    if len(canonical) != array.shape[0]:
-        raise XYZFormatError(
-            f"got {len(canonical)} symbols but {array.shape[0]} coordinate rows"
-        )
-    if array.shape[0] == 0:
-        raise XYZFormatError("a molecule must contain at least one atom")
-    if not bool(np.all(np.isfinite(array))):
-        raise XYZFormatError("coordinates must all be finite")
-    molecule = Molecule(symbols=tuple(canonical), coordinates=array)
-    _check_distinct(molecule, None)
-    return molecule
+    try:
+        array = np.asarray(coordinates, dtype=float)
+    except (TypeError, ValueError) as exc:
+        raise XYZFormatError(f"coordinates must be numeric: {exc}") from exc
+    try:
+        return Molecule(symbols=tuple(canonical), coordinates=array)
+    except ValueError as exc:
+        raise XYZFormatError(str(exc)) from exc

@@ -48,6 +48,15 @@ INVERSION = -np.eye(3)
 #: numerically meaningless rather than normalised into noise.
 _DIRECTION_EPS = 1e-9
 
+#: Below this many atoms in one element, the all-pairs form of a
+#: nearest-neighbour search beats a spatial grid on constant factors.
+_ALL_PAIRS_MAX_ATOMS = 200
+
+#: Machine epsilon and the multiple of it allowed for the cancellation in
+#: the squared-distance expansion used by :class:`StructureMatcher`.
+_EPS = float(np.finfo(np.float64).eps)
+_CANCELLATION_SLACK = 16.0
+
 
 def centroid(coordinates: FloatArray) -> FloatArray:
     """Return the unweighted centroid of ``coordinates``.
@@ -105,23 +114,69 @@ def element_blocks(symbols: Sequence[str]) -> dict[str, IntArray]:
 
 
 def minimum_equivalent_separation(
-    coordinates: FloatArray, blocks: dict[str, IntArray]
+    coordinates: FloatArray, blocks: dict[str, IntArray], limit: float = math.inf
 ) -> float:
     """Shortest distance between two atoms of the same element.
 
-    Returns ``inf`` when no element occurs twice.  Atom-to-atom matching is
-    only well posed while twice the tolerance stays below this distance: a
-    transformed atom can then be within tolerance of at most one partner.
+    Returns ``inf`` when no element occurs twice, and may return ``inf``
+    rather than the true value when every same-element pair is further
+    apart than ``limit``.  Callers only care whether the separation is
+    small enough to make matching ambiguous, and bounding the search that
+    way keeps it linear: the all-pairs form needed ``24 * natoms**2`` bytes
+    and ran out of memory on structures of a few thousand atoms.
+
+    Atom-to-atom matching is only well posed while twice the tolerance
+    stays below this distance, because a transformed atom can then be
+    within tolerance of at most one partner.
     """
     shortest = math.inf
     for indices in blocks.values():
         if len(indices) < 2:
             continue
         block = coordinates[indices]
-        squared = ((block[:, None, :] - block[None, :, :]) ** 2).sum(axis=-1)
-        np.fill_diagonal(squared, np.inf)
-        shortest = min(shortest, math.sqrt(float(np.min(squared))))
+        if len(indices) <= _ALL_PAIRS_MAX_ATOMS or not math.isfinite(limit):
+            squared = ((block[:, None, :] - block[None, :, :]) ** 2).sum(axis=-1)
+            np.fill_diagonal(squared, np.inf)
+            shortest = min(shortest, math.sqrt(float(np.min(squared))))
+            continue
+        shortest = min(shortest, _nearest_within(block, min(limit, shortest)))
     return shortest
+
+
+def _nearest_within(block: FloatArray, limit: float) -> float:
+    """Shortest distance between two rows of ``block``, or ``inf`` past ``limit``.
+
+    ``limit`` must be finite and positive; the caller takes the all-pairs
+    branch otherwise.
+    """
+    shortest = math.inf
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    neighbourhood = [
+        (dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+    ]
+    for index, position in enumerate(block):
+        key = _grid_key(position, limit)
+        for offset in neighbourhood:
+            neighbours = buckets.get(
+                (key[0] + offset[0], key[1] + offset[1], key[2] + offset[2])
+            )
+            if neighbours is None:
+                continue
+            for other in neighbours:
+                separation = float(np.linalg.norm(block[other] - position))
+                if separation < shortest:
+                    shortest = separation
+        buckets.setdefault(key, []).append(index)
+    return shortest
+
+
+def _grid_key(position: FloatArray, cell: float) -> tuple[int, int, int]:
+    """Index of the grid cell holding ``position`` for the given cell size."""
+    return (
+        math.floor(float(position[0]) / cell),
+        math.floor(float(position[1]) / cell),
+        math.floor(float(position[2]) / cell),
+    )
 
 
 def _normalize(vectors: FloatArray) -> FloatArray:
@@ -193,15 +248,18 @@ def _reference_atoms(
     the XYZ lines.
     """
     radii = np.linalg.norm(coordinates, axis=1)
-    smallest: IntArray | None = None
-    for indices in blocks.values():
-        off_centre = indices[radii[indices] > _DIRECTION_EPS]
-        if len(off_centre) < 2:
-            continue
-        if smallest is None or len(off_centre) < len(smallest):
-            smallest = off_centre
-    if smallest is None:
+    # Ties are broken on the element symbol, never on which element happened
+    # to appear first in the file, so the choice is a property of the
+    # molecule rather than of the XYZ line order.
+    candidates = [
+        (len(off_centre), symbol, off_centre)
+        for symbol, indices in blocks.items()
+        for off_centre in [indices[radii[indices] > _DIRECTION_EPS]]
+        if len(off_centre) >= 2
+    ]
+    if not candidates:
         return np.zeros(0, dtype=int)
+    smallest = min(candidates, key=lambda entry: (entry[0], entry[1]))[2]
     order = sorted(
         smallest,
         key=lambda i: (-round(float(radii[i]), 9), *np.round(coordinates[i], 9)),
@@ -318,7 +376,7 @@ def improper_rotation_matrix(axis: VectorLike, angle: float) -> FloatArray:
     return rotation_matrix(axis, angle) @ reflection_matrix(axis)
 
 
-@dataclass
+@dataclass(eq=False)
 class StructureMatcher:
     """Test whether an orthogonal matrix maps a centred molecule onto itself.
 
@@ -329,7 +387,8 @@ class StructureMatcher:
 
     ``tolerance`` must be smaller than half the shortest distance between two
     atoms of the same element, otherwise the nearest-neighbour assignment is
-    ambiguous and operations are rejected conservatively.
+    ambiguous and operations are rejected conservatively.  ``blocks`` must
+    assign every atom to exactly one element.
     """
 
     coordinates: FloatArray
@@ -340,11 +399,26 @@ class StructureMatcher:
     PROBE_SIZE = 4
 
     def __post_init__(self) -> None:
+        covered = sorted(int(i) for idx in self.blocks.values() for i in idx)
+        if covered != list(range(len(self.coordinates))):
+            raise ValueError(
+                "blocks must assign every atom to exactly one element "
+                f"({len(covered)} assignments for {len(self.coordinates)} atoms)"
+            )
         self._blocks = []
         for indices in sorted(self.blocks.values(), key=len):
             block = np.ascontiguousarray(self.coordinates[indices])
             self._blocks.append((indices, block, (block**2).sum(axis=1)))
-        self._tolerance_squared = float(self.tolerance) ** 2
+        # Squared distances are formed as |a|^2 + |b|^2 - 2 a.b, whose
+        # cancellation error grows with the square of the molecular radius.
+        # Allowing for it keeps the identity -- which every point group
+        # contains -- from being rejected at very small tolerances.
+        extent = (
+            float(np.max((self.coordinates**2).sum(axis=1))) if len(self.coordinates) else 0.0
+        )
+        self._tolerance_squared = (
+            float(self.tolerance) ** 2 + _CANCELLATION_SLACK * _EPS * extent
+        )
         # Most candidate matrices are wrong, and a handful of atoms is enough
         # to see that.  Checking them first turns the common rejection from
         # an all-atom comparison into a few rows of one.
@@ -372,7 +446,7 @@ class StructureMatcher:
         if np.max(probe_squared.min(axis=1)) > self._tolerance_squared:
             return None
 
-        mapping = np.empty(len(self.coordinates), dtype=int)
+        mapping = np.full(len(self.coordinates), -1, dtype=int)
         for indices, block, norms in self._blocks:
             moved = block @ transpose
             if len(indices) == 1:

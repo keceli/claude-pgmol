@@ -126,6 +126,37 @@ def test_console_script_binary_is_available(water_xyz: Path) -> None:
     assert completed.stdout.strip() == "C2v"
 
 
+def _distorted_cube(tmp_path: Path) -> Path:
+    import numpy as np
+
+    rng = np.random.default_rng(0)
+    cube = np.array([[x, y, z] for x in (-1.0, 1.0) for y in (-1.0, 1.0) for z in (-1.0, 1.0)])
+    distorted = cube + rng.normal(scale=0.12, size=cube.shape)
+    lines = ["8", "distorted cube"]
+    lines += [f"C {x:.9f} {y:.9f} {z:.9f}" for x, y, z in distorted]
+    path = tmp_path / "cube.xyz"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_warns_without_verbose_when_the_group_is_only_approximate(
+    tmp_path: Path, capsys
+) -> None:
+    """A caller reading only stdout must still be told the label is unsafe."""
+    path = _distorted_cube(tmp_path)
+    assert main([str(path), "--tolerance", "0.35"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "Td"
+    assert "pgmol: warning:" in captured.err
+    assert "do not form a group" in captured.err
+    assert "--tolerance" in captured.err
+
+
+def test_no_warning_for_a_clean_group(water_xyz: Path, capsys) -> None:
+    assert main([str(water_xyz)]) == 0
+    assert capsys.readouterr().err == ""
+
+
 def test_verbose_warns_when_the_group_is_only_approximate(tmp_path: Path, capsys) -> None:
     """A tolerance too loose for the geometry yields a non-group, and says so."""
     import numpy as np
@@ -142,7 +173,7 @@ def test_verbose_warns_when_the_group_is_only_approximate(tmp_path: Path, capsys
     captured = capsys.readouterr()
     assert captured.out.strip()
     assert "warning:" in captured.err
-    assert "approximately symmetric" in captured.err
+    assert "do not form a group" in captured.err
 
 
 def test_verbose_reports_a_capped_tolerance(tmp_path: Path, capsys) -> None:

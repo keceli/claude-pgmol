@@ -7,6 +7,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from .classify import classify_group, expected_order
 from .errors import SymmetryError
 from .geometry import (
@@ -38,7 +40,7 @@ DEFAULT_TOLERANCE = 0.1
 _AMBIGUITY_FRACTION = 0.49
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class SymmetryAnalysis:
     """Result of a point-group determination.
 
@@ -71,6 +73,24 @@ class SymmetryAnalysis:
     operations: tuple[SymmetryOperation, ...]
     consistent: bool
 
+    def _key(self) -> tuple[object, ...]:
+        return (
+            self.label,
+            self.tolerance,
+            self.effective_tolerance,
+            self.order,
+            self.operations,
+            self.consistent,
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SymmetryAnalysis):
+            return NotImplemented
+        return self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
     def operation_counts(self) -> dict[str, int]:
         """Number of operations of each type, keyed by label such as ``"C3"``."""
         tally: dict[str, int] = {}
@@ -90,7 +110,11 @@ def _effective_tolerance(
     coordinates: FloatArray, blocks: dict[str, IntArray], tolerance: float
 ) -> float:
     """Cap ``tolerance`` so that atom-to-atom matching stays unambiguous."""
-    separation = minimum_equivalent_separation(coordinates, blocks)
+    # Only a separation below tolerance / fraction can bind the cap, so the
+    # search can stop there and stay linear in the atom count.
+    separation = minimum_equivalent_separation(
+        coordinates, blocks, limit=tolerance / _AMBIGUITY_FRACTION
+    )
     if not math.isfinite(separation):
         return tolerance
     return min(tolerance, _AMBIGUITY_FRACTION * separation)
@@ -130,14 +154,22 @@ def analyze(molecule: Molecule, tolerance: float = DEFAULT_TOLERANCE) -> Symmetr
     blocks = element_blocks(molecule.symbols)
     effective = _effective_tolerance(coords, blocks, tol)
 
-    # Collinearity is a plain geometric threshold with no matching ambiguity,
-    # so it uses the tolerance exactly as requested.
-    if is_linear(coords, tol):
+    # The collinearity test uses the same tolerance as atom matching.  With
+    # the requested value instead, the linear short-circuit was more
+    # permissive than the rest of the pipeline and returned an infinite
+    # group -- without verifying a single operation -- for geometries the
+    # operation search would never have called linear.
+    if is_linear(coords, effective):
         matcher = StructureMatcher(coords, blocks, effective)
         label = "Dinfh" if matcher.matches(INVERSION) else "Cinfv"
         return SymmetryAnalysis(label, tol, effective, None, (), True)
 
-    group: SymmetryGroup = detect_operations(molecule.symbols, coords, effective)
+    try:
+        group: SymmetryGroup = detect_operations(molecule.symbols, coords, effective)
+    except np.linalg.LinAlgError as exc:  # pragma: no cover - needs a LAPACK failure
+        raise SymmetryError(
+            f"symmetry analysis failed numerically for this geometry: {exc}"
+        ) from exc
     label = classify_group(group)
     consistent = group.closed and expected_order(label) == group.order
     return SymmetryAnalysis(label, tol, effective, group.order, group.operations, consistent)

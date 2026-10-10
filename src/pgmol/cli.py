@@ -58,6 +58,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Flush before writing diagnostics so the two streams stay in order when
     # both are attached to the same terminal.
+    # Flush before writing diagnostics so the two streams stay in order when
+    # both are attached to the same terminal.
     print(result.label, flush=True)
     if args.verbose:
         order = "infinite" if result.order is None else str(result.order)
@@ -76,12 +78,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{count}x{label}" for label, count in result.operation_counts().items()
             )
             print(f"operations: {summary}", file=sys.stderr)
-        if not result.consistent:
-            print(
-                "warning: the operations found are not a consistent group at this "
-                "tolerance; the geometry is only approximately symmetric",
-                file=sys.stderr,
-            )
+    if not result.consistent:
+        # Always warn, not only under --verbose: the package has proved the
+        # operations it found are not a group, so the label on stdout is
+        # unreliable and a caller reading only stdout must still be told.
+        print(
+            f"pgmol: warning: {args.xyz}: the operations found at tolerance "
+            f"{result.effective_tolerance:g} A do not form a group, so "
+            f"'{result.label}' is only approximate; try a smaller --tolerance",
+            file=sys.stderr,
+        )
     return 0
 
 

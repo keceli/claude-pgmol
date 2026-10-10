@@ -58,7 +58,7 @@ The public API is:
 | `analyze(molecule, tolerance=0.1)` | Full `SymmetryAnalysis` record |
 | `read_xyz(path)` / `parse_xyz(text)` | Parse XYZ into a `Molecule` |
 | `molecule_from_coordinates(symbols, coordinates)` | Build a `Molecule` directly |
-| `Molecule` | Immutable symbols + coordinates |
+| `Molecule` | Immutable symbols + coordinates; compares and hashes by value |
 | `PGMolError`, `XYZFormatError`, `SymmetryError` | Exceptions |
 
 Coordinates passed in are copied, never modified. Importing the package has
@@ -120,11 +120,20 @@ guesswork:
 `SymmetryAnalysis.consistent` is `False` when the operations found do not
 close under composition or their count does not match the order the label
 implies. That means the tolerance is too loose for the geometry: tighten it.
-The command line prints a warning in that case.
+The command line always warns on stderr in that case, with or without
+`--verbose`, because the label on stdout is then unreliable.
 
-Collinearity is tested against the tolerance as a plain geometric threshold
-(no matching is involved), so a molecule bent by less than the tolerance is
-reported as linear.
+The tolerance also has a lower bound in practice. Squared distances are
+compared with an allowance for floating-point cancellation that scales with
+the molecular radius, so tolerances below roughly `1e-8` times that radius
+stop being meaningful — but the identity is always matched, so the result
+is never an impossible group of order zero.
+
+Collinearity is tested against the same (capped) tolerance, so the linear
+short-circuit is never more permissive than the operation search that
+follows it. A molecule bent by less than that tolerance is reported as
+linear — at a tolerance comparable to its own bond lengths, any molecule
+eventually is.
 
 ## Supported labels
 
@@ -154,14 +163,18 @@ Supported conventions:
 * The comment line may be empty.
 * Element symbols are case-insensitive (`cl`, `CL`, `Cl`), and a bare atomic
   number (`17`) is accepted; both are canonicalised to the IUPAC symbol.
-* Coordinates are in ångströms, in any float syntax Python accepts.
+* Coordinates are in ångströms, in any float syntax Python accepts, with a
+  magnitude below `1e100` (beyond that the geometry is not physical and the
+  arithmetic overflows).
 
 Rejected with a message naming the file and line, rather than silently
 reinterpreted: a wrong atom count, a truncated or blank-interrupted atom
 block, anything other than exactly four fields per atom line (so extended-XYZ
 columns are an error, not data), unknown element symbols, non-finite
-coordinates, coincident atoms, and trailing content such as a second
-trajectory frame.
+or absurdly large coordinates, coincident atoms, and trailing content such
+as a second trajectory frame. Atomic numbers must be written in ASCII
+digits: other Unicode digit characters are rejected rather than silently
+reinterpreted.
 
 ## Limitations
 
@@ -188,12 +201,12 @@ Measured on one core (Python 3.10, NumPy 2.2):
 
 | Molecule | Atoms | Group | Time |
 | --- | --- | --- | --- |
-| H2O | 3 | `C2v` | ~3 ms |
-| C6H6 | 12 | `D6h` | ~11 ms |
-| B12H12 | 24 | `Ih` | ~85 ms |
-| C60 | 60 | `Ih` | ~1.9 s |
+| H2O | 3 | `C2v` | ~4 ms |
+| C6H6 | 12 | `D6h` | ~15 ms |
+| B12H12 | 24 | `Ih` | ~113 ms |
+| C60 | 60 | `Ih` | ~2.0 s |
 
-All 36 acceptance fixtures together take about 0.3 s. Molecules of a few
+All 36 acceptance fixtures together take about 0.5 s. Molecules of a few
 hundred equivalent atoms are not a design target.
 
 ## Tests

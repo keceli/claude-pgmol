@@ -44,7 +44,7 @@ PROPER = "proper"
 IMPROPER = "improper"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class SymmetryOperation:
     """One orthogonal operation that maps the molecule onto itself.
 
@@ -67,12 +67,43 @@ class SymmetryOperation:
     order: int
     axis: FloatArray | None
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SymmetryOperation):
+            return NotImplemented
+        return (
+            self.kind == other.kind
+            and self.order == other.order
+            and bool(np.array_equal(self.matrix, other.matrix))
+        )
+
+    def __hash__(self) -> int:
+        # Adding zero folds -0.0 onto 0.0, which array_equal treats as equal
+        # but whose raw bytes differ.
+        return hash((self.kind, self.order, (self.matrix + 0.0).tobytes()))
+
     @property
     def label(self) -> str:
-        """Short Schoenflies-style name such as ``"C3"``, ``"S4"`` or ``"i"``."""
+        """Short Schoenflies-style name such as ``"C3"``, ``"S4"`` or ``"i"``.
+
+        The index is the ``n`` of ``C_n``/``S_n``, which is *not* always the
+        matrix order: ``S_n`` for odd ``n`` returns to the identity only
+        after ``2n`` applications, so ``S3`` has matrix order 6.  Naming it
+        from the rotation angle keeps ``D3h`` reporting ``S3`` rather than a
+        nonexistent ``S6``, and keeps the genuinely distinct ``S3`` and
+        ``S6`` of ``D6h`` apart.
+        """
         if self.kind in {"E", "i", "sigma"}:
-            return {"E": "E", "i": "i", "sigma": "sigma"}[self.kind]
-        return f"{'C' if self.kind == 'Cn' else 'S'}{self.order}"
+            return self.kind
+        if self.kind == "Cn":
+            return f"C{self.order}"
+        return f"S{_schoenflies_index(self.rotation_angle, self.order)}"
+
+    @property
+    def rotation_angle(self) -> float:
+        """Rotation angle in radians, about :attr:`axis`, in ``[0, pi]``."""
+        trace = float(np.trace(self.matrix))
+        offset = -1.0 if self.is_proper else 1.0
+        return math.acos(min(1.0, max(-1.0, (trace + offset) / 2.0)))
 
     @property
     def determinant(self) -> float:
@@ -81,6 +112,19 @@ class SymmetryOperation:
     @property
     def is_proper(self) -> bool:
         return self.kind in {"E", "Cn"}
+
+
+def _schoenflies_index(angle: float, max_index: int, atol: float = 1e-6) -> int:
+    """Smallest ``n`` with ``angle`` an exact multiple of ``2*pi/n``.
+
+    This is the denominator of ``angle / 2*pi`` in lowest terms, which is the
+    order of the axis the operation belongs to.
+    """
+    ratio = angle / (2.0 * math.pi)
+    for index in range(1, max(max_index, 1) + 1):
+        if abs(index * ratio - round(index * ratio)) < atol:
+            return index
+    return max_index
 
 
 def _axis_from_skew(matrix: FloatArray) -> FloatArray:
@@ -448,35 +492,33 @@ def _axis_candidates(
     radius_squared = np.maximum(norms_squared - height**2, 0.0)
     tolerance_squared = tolerance * tolerance
 
-    # Use the element with the fewest off-axis atoms: it yields the fewest
-    # candidate angles while still constraining the operation completely.
-    chosen: IntArray | None = None
-    for indices in blocks.values():
-        off_axis = indices[radius_squared[indices] > tolerance_squared]
+    # Every element is used as the reference in turn.  Picking only the
+    # element with the fewest off-axis atoms was cheaper, but which element
+    # won depended on XYZ line order whenever two tied, and the radius and
+    # height screens below can reject a genuine partner for one element
+    # while accepting it for another -- so the same atoms in a different
+    # order could give a different point group.
+    for indices in sorted(blocks.items()):
+        partners = indices[1]
+        off_axis = partners[radius_squared[partners] > tolerance_squared]
         if len(off_axis) == 0:
-            continue
-        if chosen is None or len(off_axis) < len(chosen):
-            chosen = off_axis
-    if chosen is None:  # every atom lies on the axis: the molecule is linear
-        return
+            continue  # this element lies entirely on the axis
+        reference = int(off_axis[np.argmax(radius_squared[off_axis])])
+        reference_radius = math.sqrt(radius_squared[reference])
+        first = coordinates[reference] - height[reference] * axis
+        first = first / reference_radius
+        second = np.cross(axis, first)
+        # Both basis vectors are perpendicular to the axis, so projecting
+        # the raw coordinates onto them gives the same result as projecting
+        # the perpendicular components, for two products in total.
+        along_first = coordinates @ first
+        along_second = coordinates @ second
 
-    reference = int(chosen[np.argmax(radius_squared[chosen])])
-    partners = next(idx for idx in blocks.values() if reference in idx)
-    reference_radius = math.sqrt(radius_squared[reference])
-    first = coordinates[reference] - height[reference] * axis
-    first = first / reference_radius
-    second = np.cross(axis, first)
-    # Both basis vectors are perpendicular to the axis, so projecting the
-    # raw coordinates onto them gives the same result as projecting the
-    # perpendicular components, for two matrix-vector products in total.
-    along_first = coordinates @ first
-    along_second = coordinates @ second
-
-    for index in partners:
-        if abs(math.sqrt(radius_squared[index]) - reference_radius) > tolerance:
-            continue
-        angle = math.atan2(float(along_second[index]), float(along_first[index]))
-        if abs(height[index] - height[reference]) <= tolerance:
-            yield rotation_matrix(axis, angle)
-        if abs(height[index] + height[reference]) <= tolerance:
-            yield improper_rotation_matrix(axis, angle)
+        for index in partners:
+            if abs(math.sqrt(radius_squared[index]) - reference_radius) > tolerance:
+                continue
+            angle = math.atan2(float(along_second[index]), float(along_first[index]))
+            if abs(height[index] - height[reference]) <= tolerance:
+                yield rotation_matrix(axis, angle)
+            if abs(height[index] + height[reference]) <= tolerance:
+                yield improper_rotation_matrix(axis, angle)
