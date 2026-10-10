@@ -78,7 +78,7 @@ class Molecule:
             )
         if coords.shape[0] == 0:
             raise ValueError("a molecule must contain at least one atom")
-        if not np.isfinite(coords).all():
+        if not bool(np.all(np.isfinite(coords))):
             raise ValueError("coordinates must all be finite")
         coords.flags.writeable = False
         object.__setattr__(self, "coordinates", coords)
@@ -328,7 +328,7 @@ def molecule_from_coordinates(
         )
     if array.shape[0] == 0:
         raise XYZFormatError("a molecule must contain at least one atom")
-    if not np.isfinite(array).all():
+    if not bool(np.all(np.isfinite(array))):
         raise XYZFormatError("coordinates must all be finite")
     molecule = Molecule(symbols=tuple(canonical), coordinates=array)
     _check_distinct(molecule, None)

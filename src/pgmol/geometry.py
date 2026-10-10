@@ -78,7 +78,7 @@ def is_linear(coordinates: FloatArray, tolerance: float) -> bool:
         return True
     axis = principal_axes(coords)[0]
     perpendicular = coords - np.outer(coords @ axis, axis)
-    return bool(np.linalg.norm(perpendicular, axis=1).max() <= tolerance)
+    return bool(np.max(np.linalg.norm(perpendicular, axis=1)) <= tolerance)
 
 
 def principal_axes(coordinates: FloatArray) -> FloatArray:
@@ -120,7 +120,7 @@ def minimum_equivalent_separation(
         block = coordinates[indices]
         squared = ((block[:, None, :] - block[None, :, :]) ** 2).sum(axis=-1)
         np.fill_diagonal(squared, np.inf)
-        shortest = min(shortest, math.sqrt(float(squared.min())))
+        shortest = min(shortest, math.sqrt(float(np.min(squared))))
     return shortest
 
 
@@ -369,14 +369,14 @@ class StructureMatcher:
             + self._probe_squared[None, :]
             - 2.0 * (probe @ self._probe_block)
         )
-        if probe_squared.min(axis=1).max() > self._tolerance_squared:
+        if np.max(probe_squared.min(axis=1)) > self._tolerance_squared:
             return None
 
         mapping = np.empty(len(self.coordinates), dtype=int)
         for indices, block, norms in self._blocks:
             moved = block @ transpose
             if len(indices) == 1:
-                if float(((moved - block) ** 2).sum()) > self._tolerance_squared:
+                if float(np.sum((moved - block) ** 2)) > self._tolerance_squared:
                     return None
                 mapping[indices[0]] = indices[0]
                 continue
@@ -385,7 +385,8 @@ class StructureMatcher:
             # difference array.
             squared = norms[:, None] + norms[None, :] - 2.0 * (moved @ block.T)
             nearest = squared.argmin(axis=1)
-            if squared[np.arange(len(indices)), nearest].max() > self._tolerance_squared:
+            worst = np.max(squared[np.arange(len(indices)), nearest])
+            if worst > self._tolerance_squared:
                 return None
             if len(np.unique(nearest)) != len(indices):
                 return None

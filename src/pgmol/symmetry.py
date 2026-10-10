@@ -110,7 +110,7 @@ def _matrix_order(matrix: FloatArray, atol: float, limit: int) -> int | None:
     """
     power = np.array(matrix, dtype=float)
     for order in range(1, max(limit, 1) + 1):
-        if np.abs(power - IDENTITY).max() <= atol:
+        if np.max(np.abs(power - IDENTITY)) <= atol:
             return order
         power = power @ matrix
     return None
@@ -161,7 +161,7 @@ def identify_operation(
     trace = float(np.trace(array))
 
     if determinant > 0.0:
-        if np.abs(array - IDENTITY).max() <= atol:
+        if np.max(np.abs(array - IDENTITY)) <= atol:
             return SymmetryOperation(array, "E", 1, None)
         angle = math.acos(min(1.0, max(-1.0, (trace - 1.0) / 2.0)))
         if math.sin(angle) > atol:
@@ -170,7 +170,7 @@ def identify_operation(
             axis = _axis_from_projector((array + IDENTITY) / 2.0)
         return SymmetryOperation(array, "Cn", order, axis)
 
-    if np.abs(array - INVERSION).max() <= atol:
+    if np.max(np.abs(array - INVERSION)) <= atol:
         return SymmetryOperation(array, "i", 2, None)
     angle = math.acos(min(1.0, max(-1.0, (trace + 1.0) / 2.0)))
     if math.sin(angle) <= atol:  # angle == 0: a pure reflection
@@ -319,7 +319,7 @@ def detect_operations(
     matcher = StructureMatcher(coords, blocks, tolerance)
 
     norms_squared = (coords**2).sum(axis=1)
-    radius = float(math.sqrt(norms_squared.max()))
+    radius = float(math.sqrt(np.max(norms_squared)))
     angular_tolerance = _angular_tolerance(tolerance, radius)
     directions = candidate_directions(coords, blocks, min(1e-3, angular_tolerance), tolerance)
 
