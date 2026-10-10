@@ -9,8 +9,9 @@ A file holds exactly one frame::
     <symbol> <x> <y> <z>
     ... (natoms lines total)
 
-* Line 1 is the atom count; leading/trailing whitespace is ignored and blank
-  lines *before* it are skipped.
+* Line 1 is the atom count; leading/trailing whitespace is ignored, blank
+  lines *before* it are skipped, and a leading UTF-8 byte-order mark is
+  ignored.
 * Line 2 is a free-form comment and may be empty.
 * Each atom line holds exactly four whitespace-separated fields.  Element
   symbols are case-insensitive (``cl``, ``CL`` and ``Cl`` all parse) and a
@@ -43,7 +44,7 @@ __all__ = ["Molecule", "parse_xyz", "read_xyz"]
 _COINCIDENT_ATOM_DISTANCE = 1e-5
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Molecule:
     """An immutable set of labelled Cartesian atomic positions.
 
@@ -55,6 +56,12 @@ class Molecule:
         Read-only ``(natoms, 3)`` float64 array of ångström coordinates.
     comment:
         The XYZ comment line, verbatim (without its newline).
+
+    Two molecules are equal when their symbols and coordinates match
+    exactly.  The comment is free-form metadata describing the file rather
+    than the chemistry, so it is deliberately left out of equality and
+    hashing.  Coordinates are read-only, which is what makes instances
+    safely hashable.
     """
 
     symbols: tuple[str, ...]
@@ -77,6 +84,16 @@ class Molecule:
         object.__setattr__(self, "coordinates", coords)
         object.__setattr__(self, "symbols", tuple(self.symbols))
 
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Molecule):
+            return NotImplemented
+        return self.symbols == other.symbols and bool(
+            np.array_equal(self.coordinates, other.coordinates)
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.symbols, self.coordinates.tobytes()))
+
     def __len__(self) -> int:
         return len(self.symbols)
 
@@ -88,7 +105,9 @@ class Molecule:
     def to_xyz(self, comment: str | None = None) -> str:
         """Render the molecule as the text of a single-frame XYZ file."""
         header = self.comment if comment is None else comment
-        lines = [str(self.natoms), header.replace("\n", " ")]
+        # Any line break in the comment would turn one frame into nonsense,
+        # so collapse every kind of them, not just "\n".
+        lines = [str(self.natoms), " ".join(header.splitlines())]
         lines.extend(
             f"{symbol:<2s} {x:>20.12f} {y:>20.12f} {z:>20.12f}"
             for symbol, (x, y, z) in zip(self.symbols, self.coordinates, strict=True)
@@ -116,20 +135,44 @@ def _parse_coordinate(token: str, source: str | None, line_number: int) -> float
 
 
 def _check_distinct(molecule: Molecule, source: str | None) -> None:
+    """Reject a geometry in which two atoms sit on top of each other.
+
+    Uses a uniform grid rather than all pairs, so a large file costs linear
+    time and memory; the all-pairs form needed ``24 * natoms**2`` bytes and
+    exhausted memory on structures of a few thousand atoms before any
+    symmetry analysis could run.
+    """
     coords = molecule.coordinates
     if len(coords) < 2:
         return
-    deltas = coords[:, None, :] - coords[None, :, :]
-    distances = np.linalg.norm(deltas, axis=-1)
-    np.fill_diagonal(distances, np.inf)
-    i, j = np.unravel_index(int(np.argmin(distances)), distances.shape)
-    if distances[i, j] < _COINCIDENT_ATOM_DISTANCE:
-        raise _fail(
-            source,
-            None,
-            f"atoms {min(i, j) + 1} and {max(i, j) + 1} are coincident "
-            f"(separation {distances[i, j]:.2e} A); the geometry is not a valid molecule",
+    cell = _COINCIDENT_ATOM_DISTANCE
+    neighbourhood = [
+        (dx, dy, dz) for dx in (-1, 0, 1) for dy in (-1, 0, 1) for dz in (-1, 0, 1)
+    ]
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    for index, position in enumerate(coords):
+        key = (
+            math.floor(position[0] / cell),
+            math.floor(position[1] / cell),
+            math.floor(position[2] / cell),
         )
+        for offset in neighbourhood:
+            neighbours = buckets.get(
+                (key[0] + offset[0], key[1] + offset[1], key[2] + offset[2])
+            )
+            if neighbours is None:
+                continue
+            for other in neighbours:
+                separation = float(np.linalg.norm(coords[other] - position))
+                if separation < cell:
+                    raise _fail(
+                        source,
+                        None,
+                        f"atoms {other + 1} and {index + 1} are coincident "
+                        f"(separation {separation:.2e} A); the geometry is not "
+                        "a valid molecule",
+                    )
+        buckets.setdefault(key, []).append(index)
 
 
 def parse_xyz(text: str, *, source: str | None = None) -> Molecule:
@@ -152,7 +195,8 @@ def parse_xyz(text: str, *, source: str | None = None) -> Molecule:
     XYZFormatError
         If the text is not a well-formed single-frame XYZ file.
     """
-    raw_lines = text.splitlines()
+    # A byte-order mark left by a Windows editor is not data.
+    raw_lines = text.lstrip("\ufeff").splitlines()
 
     start = 0
     while start < len(raw_lines) and not raw_lines[start].strip():
@@ -254,7 +298,7 @@ def read_xyz(path: str | Path) -> Molecule:
     """
     file_path = Path(path)
     try:
-        text = file_path.read_text(encoding="utf-8")
+        text = file_path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise XYZFormatError(f"{file_path}: cannot read file ({exc.strerror})") from exc
     except UnicodeDecodeError as exc:

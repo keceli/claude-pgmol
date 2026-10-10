@@ -171,3 +171,97 @@ def test_molecule_from_coordinates_does_not_mutate_the_caller_array() -> None:
 def test_molecule_constructor_validates(symbols, coordinates, fragment) -> None:
     with pytest.raises(ValueError, match=fragment):
         Molecule(symbols, coordinates)
+
+
+# --- value semantics ------------------------------------------------------
+
+
+def test_molecules_compare_by_symbols_and_coordinates() -> None:
+    first = parse_xyz(WATER)
+    second = parse_xyz(WATER)
+    assert first == second
+    assert (first != second) is False
+    assert first in [second]
+
+
+def test_equality_ignores_the_comment() -> None:
+    """The comment describes the file, not the chemistry."""
+    assert parse_xyz("1\nfirst\nHe 0 0 0\n") == parse_xyz("1\nsecond\nHe 0 0 0\n")
+
+
+def test_molecules_differing_in_geometry_or_elements_are_unequal() -> None:
+    base = parse_xyz("2\n\nH 0 0 0.37\nH 0 0 -0.37\n")
+    assert base != parse_xyz("2\n\nH 0 0 0.38\nH 0 0 -0.37\n")
+    assert base != parse_xyz("2\n\nH 0 0 0.37\nHe 0 0 -0.37\n")
+    assert base != parse_xyz("1\n\nH 0 0 0\n")
+
+
+def test_molecule_is_not_equal_to_other_types() -> None:
+    assert parse_xyz(WATER) != "C2v"
+    assert parse_xyz(WATER).__eq__(42) is NotImplemented
+
+
+def test_molecules_are_hashable_and_usable_in_sets() -> None:
+    first = parse_xyz(WATER)
+    second = parse_xyz(WATER)
+    other = parse_xyz("1\n\nHe 0 0 0\n")
+    assert hash(first) == hash(second)
+    assert len({first, second, other}) == 2
+    assert {first: "water"}[second] == "water"
+
+
+# --- rendering is always re-readable -------------------------------------
+
+
+# U+2028 is a Unicode line separator, which str.splitlines() also splits on.
+@pytest.mark.parametrize("comment", ["a\rb", "a\nb", "a\r\nb", "a\u2028b", "a b", ""])
+def test_to_xyz_output_always_parses_back(comment: str) -> None:
+    """A line break in the comment must not split the frame in two."""
+    molecule = Molecule(("H", "H"), [[0, 0, 0.37], [0, 0, -0.37]], comment=comment)
+    text = molecule.to_xyz()
+    assert len(text.splitlines()) == 4
+    assert parse_xyz(text) == molecule
+
+
+# --- encodings and scale --------------------------------------------------
+
+
+def test_utf8_byte_order_mark_is_ignored(tmp_path: Path) -> None:
+    path = tmp_path / "bom.xyz"
+    path.write_bytes(b"\xef\xbb\xbf" + WATER.encode("utf-8"))
+    assert read_xyz(path).symbols == ("O", "H", "H")
+    assert parse_xyz("﻿" + WATER).symbols == ("O", "H", "H")
+
+
+def test_large_geometries_parse_in_linear_space() -> None:
+    """The coincidence check must not build an natoms-by-natoms array."""
+    import tracemalloc
+
+    rng = np.random.default_rng(0)
+    coordinates = rng.normal(size=(4000, 3)) * 50.0
+    tracemalloc.start()
+    try:
+        molecule = molecule_from_coordinates(["C"] * 4000, coordinates)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert molecule.natoms == 4000
+    # All pairs would need 24 * 4000**2 bytes, about 384 MB.
+    assert peak < 20e6
+
+
+def test_coincident_atoms_are_still_caught_at_scale() -> None:
+    rng = np.random.default_rng(1)
+    coordinates = rng.normal(size=(2000, 3)) * 50.0
+    coordinates[1500] = coordinates[7] + 1e-9
+    with pytest.raises(XYZFormatError, match="coincident"):
+        molecule_from_coordinates(["C"] * 2000, coordinates)
+
+
+@pytest.mark.parametrize("separation", [1.5e-5, 1e-4, 1e-2])
+def test_atoms_just_beyond_the_coincidence_threshold_are_allowed(
+    separation: float,
+) -> None:
+    """1.5e-5 A lands in a neighbouring grid cell without being coincident."""
+    coordinates = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, separation]])
+    assert molecule_from_coordinates(["H", "H"], coordinates).natoms == 2
