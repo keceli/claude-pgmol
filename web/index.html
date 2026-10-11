@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pgmol — molecular point groups</title>
+<meta name="description" content="Determine the Schoenflies point group of a molecule from an XYZ geometry, entirely in your browser.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>⬢</text></svg>">
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f6f7f9; --border: #d8dce2; --text: #1b1f24;
+    --muted: #5c6670; --accent: #1f6feb; --accent-text: #ffffff;
+    --good: #1a7f37; --warn-bg: #fff4e5; --warn-border: #d98324; --warn-text: #7a4a06;
+    --bad-bg: #fff0f0; --bad-border: #cf222e; --bad-text: #8c1a23;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3;
+      --muted: #9198a1; --accent: #4493f8; --accent-text: #0d1117;
+      --good: #3fb950; --warn-bg: #2b2111; --warn-border: #9e6a03; --warn-text: #e3b341;
+      --bad-bg: #2b1416; --bad-border: #f85149; --bad-text: #ff8e8a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem 1rem 3rem; background: var(--bg); color: var(--text);
+    font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 56rem; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; letter-spacing: -0.01em; }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em;
+       color: var(--muted); margin: 0 0 .6rem; font-weight: 600; }
+  .lede { color: var(--muted); margin: 0 0 1.25rem; }
+  .panel { background: var(--panel); border: 1px solid var(--border);
+           border-radius: 10px; padding: 1rem; margin-bottom: 1rem; }
+  .row { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; }
+  .grow { flex: 1 1 14rem; }
+
+  #status { display: flex; align-items: center; gap: .6rem; font-size: .9rem; color: var(--muted); }
+  #status[data-state="ready"] { color: var(--good); }
+  #status[data-state="failed"] { color: var(--bad-text); }
+  .spinner { width: 1rem; height: 1rem; border: 2px solid var(--border);
+             border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  #status[data-state="ready"] .spinner, #status[data-state="failed"] .spinner { display: none; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+  #drop { border: 2px dashed var(--border); border-radius: 10px; padding: 1.6rem 1rem;
+          text-align: center; color: var(--muted); cursor: pointer; background: var(--bg); }
+  #drop:hover, #drop.over { border-color: var(--accent); color: var(--text); }
+  #drop strong { color: var(--text); }
+  textarea { width: 100%; min-height: 9rem; resize: vertical; font-family: var(--mono);
+             font-size: .85rem; padding: .6rem; border-radius: 8px;
+             border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  select, input[type=number] { font: inherit; padding: .4rem .5rem; border-radius: 7px;
+             border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  input[type=number] { width: 7rem; font-family: var(--mono); }
+  button { font: inherit; font-weight: 600; padding: .5rem 1.1rem; border-radius: 7px;
+           border: 1px solid transparent; background: var(--accent); color: var(--accent-text); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--text); border-color: var(--border); font-weight: 500; }
+  label { font-size: .9rem; color: var(--muted); }
+
+  #result[hidden] { display: none; }
+  .label { font-size: 3rem; line-height: 1; font-weight: 700; letter-spacing: -0.02em;
+           font-family: var(--mono); overflow-wrap: anywhere; }
+  .label sub { font-size: .55em; }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+           gap: .75rem; margin-top: 1rem; }
+  .fact { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .55rem .7rem; }
+  .fact dt { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .fact dd { margin: .15rem 0 0; font-family: var(--mono); font-size: .95rem; }
+  .ops { margin-top: 1rem; font-family: var(--mono); font-size: .9rem; overflow-x: auto; }
+  .note { margin-top: 1rem; padding: .7rem .85rem; border-radius: 8px; font-size: .9rem;
+          border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--warn-text); }
+  .error { border: 1px solid var(--bad-border); background: var(--bad-bg); color: var(--bad-text);
+           border-radius: 8px; padding: .8rem .9rem; font-size: .9rem; }
+  .error pre { margin: .4rem 0 0; font-family: var(--mono); font-size: .82rem;
+               white-space: pre-wrap; overflow-wrap: anywhere; }
+  footer { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--border);
+           font-size: .82rem; color: var(--muted); }
+  a { color: var(--accent); }
+  code { font-family: var(--mono); font-size: .9em; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden;
+                     clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>pgmol</h1>
+  <p class="lede">
+    Determine the Schoenflies point group of a molecule from its XYZ geometry.
+    This page runs the real <code>pgmol</code> Python package in your browser —
+    your file is never uploaded anywhere.
+  </p>
+
+  <div class="panel">
+    <div id="status" data-state="loading" role="status" aria-live="polite">
+      <span class="spinner" aria-hidden="true"></span><span id="status-text">Starting…</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Geometry</h2>
+    <div id="drop" tabindex="0" role="button" aria-label="Choose an XYZ file, or drag one here">
+      <strong>Drop an .xyz file here</strong> — or click to choose one
+    </div>
+    <input id="file" type="file" accept=".xyz,text/plain" class="visually-hidden">
+
+    <p style="margin:.9rem 0 .4rem"><label for="text">…or paste XYZ coordinates:</label></p>
+    <textarea id="text" spellcheck="false" placeholder="3&#10;water&#10;O   0.000  0.000  0.000&#10;H   0.757  0.000  0.587&#10;H  -0.757  0.000  0.587"></textarea>
+
+    <div class="row" style="margin-top:.9rem">
+      <div class="grow">
+        <label for="example">Or load a test fixture:</label><br>
+        <select id="example" style="width:100%;margin-top:.25rem"><option value="">Loading…</option></select>
+      </div>
+      <div>
+        <label for="tolerance">Tolerance (Å)</label><br>
+        <input id="tolerance" type="number" value="0.1" min="0.0000001" step="0.01" style="margin-top:.25rem">
+      </div>
+      <div style="align-self:flex-end">
+        <button id="run" disabled>Find point group</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" id="result" hidden>
+    <h2>Result</h2>
+    <div id="result-body"></div>
+  </div>
+
+  <footer>
+    <span id="build">pgmol</span> ·
+    <a href="https://github.com/keceli/claude-pgmol">source on GitHub</a> ·
+    runs entirely in your browser via
+    <a href="https://pyodide.org/">Pyodide</a> (CPython 3.13 + NumPy, WebAssembly).
+  </footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

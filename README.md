@@ -2,6 +2,11 @@
 
 Determine the Schoenflies point group of a molecule from an XYZ geometry.
 
+**[Try it in your browser →](https://keceli.github.io/claude-pgmol/)** — drop in
+an `.xyz` file and get its point group. The page runs this exact package
+compiled to WebAssembly, so it is not a reimplementation and cannot disagree
+with the CLI. Nothing is uploaded: the analysis happens in your tab.
+
 `pgmol` reads ordinary XYZ coordinates, finds every symmetry operation that
 maps the molecule onto itself within a distance tolerance, closes that set
 under composition, and names the resulting group.
@@ -265,6 +270,37 @@ implies, and the set must be closed under composition.
    a polyhedral group; otherwise the principal axis fixes `n`, and `n`
    perpendicular `C2` axes, a horizontal mirror, `n` vertical mirrors and
    `S2n` select among the `D` and `C` families.
+
+## Web interface
+
+`web/` holds a static page, deployed to GitHub Pages by
+`.github/workflows/pages.yml`. It loads [Pyodide](https://pyodide.org/)
+(CPython 3.13.2 + NumPy 2.2.5, WebAssembly) in a Web Worker and installs the
+`pgmol` wheel that the workflow builds from the repository source — so the
+deployed page always runs the merged code, and no second implementation of
+the detection algorithm exists to drift out of step.
+
+Pyodide is pinned to 0.29.5 deliberately: its CPython 3.13 and NumPy 2.2 both
+sit inside the versions this package tests against. The newer `314.x` line
+ships CPython 3.14, which is outside the supported matrix.
+
+The page offers all 91 test fixtures as one-click examples, a tolerance
+control, the operation tally, and the same not-a-group warning the CLI
+prints. `tests/test_web_contract.py` executes the Python shim extracted from
+`web/worker.js` against the real package, so an API change cannot silently
+break the page.
+
+Measured in headless Chrome against the assembled site:
+
+| | |
+| --- | --- |
+| First load | ~15 MB (Pyodide 12.2 MB + NumPy 2.8 MB), then browser-cached |
+| Boot to ready | ~2 s |
+| H2O, CH4, B12H12 | < 0.5 s |
+| C60 (60 atoms) | ~4 s (about 2x the native CLI) |
+
+Limitations: needs WebAssembly and Web Workers; large structures are slower
+than the CLI; there is no 3D viewer.
 
 ## License
 
