@@ -45,6 +45,73 @@ IMPROPER = "improper"
 
 
 @dataclass(frozen=True, eq=False)
+class SymmetryElement:
+    """A distinct symmetry element of a point group.
+
+    An *operation* is something the group does; an *element* is the piece of
+    geometry it does it about.  One axis usually carries several operations
+    and can be both proper and improper at once -- the ``C3`` axis of
+    ``D3d`` is also its ``S6`` axis -- so an axis element records the
+    highest order of each.
+
+    Attributes
+    ----------
+    kind:
+        ``"axis"``, ``"plane"`` or ``"inversion"``.
+    direction:
+        Unit rotation axis for ``"axis"``, unit plane normal for
+        ``"plane"``, ``None`` for ``"inversion"``.  Measured from the
+        molecular centroid.
+    rotation_order:
+        Highest ``n`` of a proper rotation about this axis; ``1`` when the
+        axis carries only improper operations.
+    improper_order:
+        Highest ``n`` of an ``S_n`` about this axis, or ``0`` for none.
+        This is the Schoenflies index, not the matrix order: ``S3`` returns
+        to the identity only after six applications but is still ``S3``.
+    """
+
+    kind: str
+    direction: FloatArray | None
+    rotation_order: int = 1
+    improper_order: int = 0
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SymmetryElement):
+            return NotImplemented
+        same_direction = (self.direction is None and other.direction is None) or (
+            self.direction is not None
+            and other.direction is not None
+            and bool(np.array_equal(self.direction, other.direction))
+        )
+        return (
+            same_direction
+            and self.kind == other.kind
+            and self.rotation_order == other.rotation_order
+            and self.improper_order == other.improper_order
+        )
+
+    def __hash__(self) -> int:
+        # Adding zero folds -0.0 onto 0.0, which array_equal treats as equal.
+        payload = None if self.direction is None else (self.direction + 0.0).tobytes()
+        return hash((self.kind, payload, self.rotation_order, self.improper_order))
+
+    @property
+    def label(self) -> str:
+        """Short name such as ``"C3"``, ``"S4"``, ``"C3/S6"``, ``"sigma"``."""
+        if self.kind == "inversion":
+            return "i"
+        if self.kind == "plane":
+            return "sigma"
+        parts = []
+        if self.rotation_order > 1:
+            parts.append(f"C{self.rotation_order}")
+        if self.improper_order > 0:
+            parts.append(f"S{self.improper_order}")
+        return "/".join(parts) if parts else "C1"
+
+
+@dataclass(frozen=True, eq=False)
 class SymmetryOperation:
     """One orthogonal operation that maps the molecule onto itself.
 
@@ -269,12 +336,81 @@ class SymmetryGroup:
         """Distinct ``S_n`` axes paired with the highest operation order."""
         return _collect_axes(self.of_kind("Sn"), self.angular_tolerance)
 
+    def elements(self) -> tuple[SymmetryElement, ...]:
+        """The group's distinct symmetry elements, not its operations.
+
+        Axes are merged up to sign within the group's angular tolerance and
+        report the highest proper and improper order each one carries.  The
+        ordering is deterministic: axes by decreasing order first, then
+        planes, then the inversion centre.
+        """
+        cos_cut = math.cos(self.angular_tolerance)
+        # Each entry is [direction, highest proper order, highest improper order].
+        axes: list[tuple[FloatArray, int, int]] = []
+        for op in self.operations:
+            if op.kind not in {"Cn", "Sn"}:
+                continue
+            axis = cast(FloatArray, op.axis)
+            # Name an improper operation by its axis order, which for odd n
+            # is half its matrix order.
+            index = (
+                op.order
+                if op.kind == "Cn"
+                else _schoenflies_index(op.rotation_angle, op.order)
+            )
+            for position, (known, rotation, improper) in enumerate(axes):
+                if abs(float(np.dot(known, axis))) >= cos_cut:
+                    axes[position] = (
+                        known,
+                        max(rotation, index) if op.kind == "Cn" else rotation,
+                        max(improper, index) if op.kind == "Sn" else improper,
+                    )
+                    break
+            else:
+                axes.append(
+                    (
+                        np.asarray(axis, dtype=np.float64),
+                        index if op.kind == "Cn" else 1,
+                        index if op.kind == "Sn" else 0,
+                    )
+                )
+
+        elements = [
+            SymmetryElement("axis", direction, rotation, improper)
+            for direction, rotation, improper in axes
+        ]
+        elements.sort(
+            key=lambda e: (
+                -e.rotation_order,
+                -e.improper_order,
+                _direction_key(cast(FloatArray, e.direction)),
+            )
+        )
+        planes = [
+            SymmetryElement("plane", np.asarray(normal, dtype=np.float64))
+            for normal in self.mirror_normals
+        ]
+        planes.sort(key=lambda e: _direction_key(cast(FloatArray, e.direction)))
+        elements.extend(planes)
+        if self.has_inversion:
+            elements.append(SymmetryElement("inversion", None))
+        return tuple(elements)
+
     def counts(self) -> dict[str, int]:
         """Number of operations of each kind, for diagnostics and tests."""
         tally: dict[str, int] = {}
         for op in self.operations:
             tally[op.label] = tally.get(op.label, 0) + 1
         return dict(sorted(tally.items()))
+
+
+def _direction_key(direction: FloatArray) -> tuple[float, ...]:
+    """Deterministic ordering key for an axis or plane normal.
+
+    Only axes and planes are sorted; the inversion centre has no direction
+    and is appended afterwards.
+    """
+    return tuple(float(value) for value in np.round(np.abs(direction), 9))
 
 
 def _collect_axes(

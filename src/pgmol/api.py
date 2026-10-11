@@ -21,7 +21,12 @@ from .geometry import (
     is_linear,
     minimum_equivalent_separation,
 )
-from .symmetry import SymmetryGroup, SymmetryOperation, detect_operations
+from .symmetry import (
+    SymmetryElement,
+    SymmetryGroup,
+    SymmetryOperation,
+    detect_operations,
+)
 from .xyz import Molecule, molecule_from_coordinates, read_xyz
 
 __all__ = [
@@ -60,6 +65,10 @@ class SymmetryAnalysis:
         ``Kh``, ``Cinfv`` and ``Dinfh``.
     operations:
         The operations found, empty for the infinite groups.
+    elements:
+        The distinct symmetry elements -- axes, mirror planes and the
+        inversion centre -- rather than the operations about them.  Empty
+        for the infinite groups, whose elements are not a finite set.
     consistent:
         ``True`` when the operations are closed under composition *and* their
         count matches the order implied by ``label``.  ``False`` flags a
@@ -71,6 +80,7 @@ class SymmetryAnalysis:
     effective_tolerance: float
     order: int | None
     operations: tuple[SymmetryOperation, ...]
+    elements: tuple[SymmetryElement, ...]
     consistent: bool
 
     def _key(self) -> tuple[object, ...]:
@@ -80,6 +90,7 @@ class SymmetryAnalysis:
             self.effective_tolerance,
             self.order,
             self.operations,
+            self.elements,
             self.consistent,
         )
 
@@ -149,7 +160,7 @@ def analyze(molecule: Molecule, tolerance: float = DEFAULT_TOLERANCE) -> Symmetr
     coords = centered(molecule.coordinates)
 
     if molecule.natoms == 1:
-        return SymmetryAnalysis("Kh", tol, tol, None, (), True)
+        return SymmetryAnalysis("Kh", tol, tol, None, (), (), True)
 
     blocks = element_blocks(molecule.symbols)
     effective = _effective_tolerance(coords, blocks, tol)
@@ -163,7 +174,7 @@ def analyze(molecule: Molecule, tolerance: float = DEFAULT_TOLERANCE) -> Symmetr
     if is_linear(coords, effective / 2.0):
         matcher = StructureMatcher(coords, blocks, effective)
         label = "Dinfh" if matcher.matches(INVERSION) else "Cinfv"
-        return SymmetryAnalysis(label, tol, effective, None, (), True)
+        return SymmetryAnalysis(label, tol, effective, None, (), (), True)
 
     try:
         group: SymmetryGroup = detect_operations(molecule.symbols, coords, effective)
@@ -173,7 +184,15 @@ def analyze(molecule: Molecule, tolerance: float = DEFAULT_TOLERANCE) -> Symmetr
         ) from exc
     label = classify_group(group)
     consistent = group.closed and expected_order(label) == group.order
-    return SymmetryAnalysis(label, tol, effective, group.order, group.operations, consistent)
+    return SymmetryAnalysis(
+        label,
+        tol,
+        effective,
+        group.order,
+        group.operations,
+        group.elements(),
+        consistent,
+    )
 
 
 def find_point_group(path: str | Path, tolerance: float = DEFAULT_TOLERANCE) -> str:

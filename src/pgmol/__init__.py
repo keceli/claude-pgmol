@@ -19,6 +19,7 @@ from .api import (
     point_group_from_coordinates,
 )
 from .errors import PGMolError, SymmetryError, XYZFormatError
+from .symmetry import SymmetryElement, SymmetryOperation
 from .xyz import Molecule, molecule_from_coordinates, parse_xyz, read_xyz
 
 __version__ = "0.1.0"
@@ -28,7 +29,9 @@ __all__ = [
     "Molecule",
     "PGMolError",
     "SymmetryAnalysis",
+    "SymmetryElement",
     "SymmetryError",
+    "SymmetryOperation",
     "XYZFormatError",
     "__version__",
     "analyze",

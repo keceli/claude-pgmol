@@ -18,6 +18,7 @@ let analyse = null;
 const GLUE = `
 import json
 from pgmol import PGMolError, analyze, parse_xyz
+from pgmol.geometry import centered
 
 def _analyse(text, tolerance):
     try:
@@ -25,6 +26,21 @@ def _analyse(text, tolerance):
         result = analyze(molecule, tolerance=tolerance)
     except PGMolError as exc:
         return json.dumps({"ok": False, "error": str(exc)})
+
+    # The viewer draws symmetry elements through the origin, so it needs the
+    # geometry in the same frame the analysis used: centred on the centroid.
+    coordinates = centered(molecule.coordinates)
+    radius = float(max(1.0, (coordinates ** 2).sum(axis=1).max() ** 0.5))
+    # chr(10), not an escape: this Python is embedded in a JS template
+    # literal, so any backslash here would be read differently by the
+    # browser than by the test that extracts it from the file.
+    newline = chr(10)
+    lines = [str(molecule.natoms), "centred"]
+    lines += [
+        "%s %.9f %.9f %.9f" % (symbol, row[0], row[1], row[2])
+        for symbol, row in zip(molecule.symbols, coordinates)
+    ]
+
     return json.dumps({
         "ok": True,
         "label": result.label,
@@ -35,6 +51,21 @@ def _analyse(text, tolerance):
         "tolerance": result.tolerance,
         "effective_tolerance": result.effective_tolerance,
         "counts": result.operation_counts(),
+        "radius": radius,
+        "xyz": newline.join(lines) + newline,
+        "elements": [
+            {
+                "kind": element.kind,
+                "label": element.label,
+                "rotation_order": element.rotation_order,
+                "improper_order": element.improper_order,
+                "direction": (
+                    None if element.direction is None
+                    else [float(v) for v in element.direction]
+                ),
+            }
+            for element in result.elements
+        ],
     })
 
 _analyse

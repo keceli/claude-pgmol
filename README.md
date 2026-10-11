@@ -3,7 +3,8 @@
 Determine the Schoenflies point group of a molecule from an XYZ geometry.
 
 **[Try it in your browser →](https://keceli.github.io/claude-pgmol/)** — drop in
-an `.xyz` file and get its point group. The page runs this exact package
+an `.xyz` file, get its point group, and see the symmetry elements drawn over
+the structure in 3D. The page runs this exact package
 compiled to WebAssembly, so it is not a reimplementation and cannot disagree
 with the CLI. Nothing is uploaded: the analysis happens in your tab.
 
@@ -54,6 +55,18 @@ $ pip install -e ".[dev]"
 True
 ```
 
+`operations` are what the group *does*; `elements` are the geometry it does
+it about — the axes, mirror planes and inversion centre, each counted once.
+An axis reports the highest order of each type it carries, so the `C3` axis
+of `D3d` is also its `S6` axis:
+
+```python
+>>> [e.label for e in result.elements]           # methane
+['C3', 'C3', 'C3', 'C3', 'C2/S4', 'C2/S4', 'C2/S4', 'sigma', ... ]
+>>> result.elements[0].direction                 # a unit vector from the centroid
+array([0.57735027, 0.57735027, 0.57735027])
+```
+
 The public API is:
 
 | Name | Purpose |
@@ -61,6 +74,7 @@ The public API is:
 | `find_point_group(path, tolerance=0.1)` | Label for an XYZ file |
 | `point_group_from_coordinates(symbols, coordinates, tolerance=0.1)` | Label for in-memory coordinates |
 | `analyze(molecule, tolerance=0.1)` | Full `SymmetryAnalysis` record |
+| `SymmetryElement` | A distinct axis, mirror plane or inversion centre |
 | `read_xyz(path)` / `parse_xyz(text)` | Parse XYZ into a `Molecule` |
 | `molecule_from_coordinates(symbols, coordinates)` | Build a `Molecule` directly |
 | `Molecule` | Immutable symbols + coordinates; compares and hashes by value |
@@ -286,7 +300,13 @@ ships CPython 3.14, which is outside the supported matrix.
 
 The page offers all 91 test fixtures as one-click examples, a tolerance
 control, the operation tally, and the same not-a-group warning the CLI
-prints. `tests/test_web_contract.py` executes the Python shim extracted from
+prints. It also renders the structure with
+[3Dmol.js](https://3dmol.csb.pitt.edu/) (pinned, ~540 KB) and draws the
+detected symmetry elements over it — rotation axes coloured and labelled by
+order, mirror planes outlined, the inversion centre marked — each toggleable.
+Those come from `SymmetryAnalysis.elements`, so the picture is generated from
+the same analysis as the label rather than from a separate guess at the
+geometry. `tests/test_web_contract.py` executes the Python shim extracted from
 `web/worker.js` against the real package, so an API change cannot silently
 break the page.
 
@@ -297,10 +317,11 @@ Measured in headless Chrome against the assembled site:
 | First load | ~15 MB (Pyodide 12.2 MB + NumPy 2.8 MB), then browser-cached |
 | Boot to ready | ~2 s |
 | H2O, CH4, B12H12 | < 0.5 s |
-| C60 (60 atoms) | ~4 s (about 2x the native CLI) |
+| C60 (60 atoms) | ~4 s analysis, ~5 s including the 3D render |
 
-Limitations: needs WebAssembly and Web Workers; large structures are slower
-than the CLI; there is no 3D viewer.
+Limitations: needs WebAssembly, Web Workers and WebGL; large structures are
+slower than the CLI. Infinite groups (`Kh`, `Cinfv`, `Dinfh`) have no finite
+set of elements, so the viewer draws the molecule without an overlay.
 
 ## License
 

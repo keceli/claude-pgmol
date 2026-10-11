@@ -154,3 +154,67 @@ def test_every_element_app_js_looks_up_exists_in_the_page() -> None:
         assert f'id="{element_id}"' in html, (
             f"app.js reads #{element_id}, absent from index.html"
         )
+
+
+# --- the 3D viewer's data ------------------------------------------------
+
+
+def test_shim_returns_geometry_in_the_frame_the_elements_use(analyse) -> None:
+    """Symmetry elements pass through the centroid, so the viewer needs the
+    centred coordinates, not the ones as written in the file."""
+    payload = json.loads(analyse("3\nwater\nO 9 9 9\nH 9.757 9 9.587\nH 8.243 9 9.587\n", 0.1))
+    lines = payload["xyz"].splitlines()
+    assert lines[0] == "3"
+    assert len(lines) == 5
+    coordinates = [[float(v) for v in line.split()[1:]] for line in lines[2:]]
+    centroid = [sum(c[i] for c in coordinates) / 3 for i in range(3)]
+    assert centroid == pytest.approx([0.0, 0.0, 0.0], abs=1e-9)
+    assert payload["radius"] >= 1.0
+
+
+def test_shim_returns_drawable_symmetry_elements(analyse) -> None:
+    payload = json.loads(analyse(WATER, 0.1))
+    elements = payload["elements"]
+    assert [e["label"] for e in elements] == ["C2", "sigma", "sigma"]
+    for element in elements:
+        assert set(element) == {
+            "kind",
+            "label",
+            "rotation_order",
+            "improper_order",
+            "direction",
+        }
+        assert element["kind"] in {"axis", "plane", "inversion"}
+        direction = element["direction"]
+        assert direction is not None and len(direction) == 3
+        assert all(isinstance(v, float) for v in direction)
+        assert sum(v * v for v in direction) == pytest.approx(1.0)
+
+
+def test_shim_marks_an_inversion_centre_with_no_direction(analyse) -> None:
+    payload = json.loads(analyse(Path("core_xyz/C2Cl2F2H2_Ci.xyz").read_text(), 0.1))
+    assert [e["label"] for e in payload["elements"]] == ["i"]
+    assert payload["elements"][0]["direction"] is None
+
+
+def test_shim_reports_no_elements_for_an_infinite_group(analyse) -> None:
+    payload = json.loads(analyse("3\nco2\nO 0 0 1.16\nC 0 0 0\nO 0 0 -1.16\n", 0.1))
+    assert payload["label"] == "Dinfh"
+    assert payload["elements"] == []
+    assert payload["xyz"]  # the molecule is still drawable
+
+
+def test_embedded_python_contains_no_backslash() -> None:
+    """The shim lives in a JS template literal, where a backslash means one
+    thing to the browser and another to the test that extracts it. Keeping
+    the Python escape-free keeps the two readings identical."""
+    source = WORKER.read_text(encoding="utf-8")
+    glue = re.search(r"const GLUE = `\n(.*?)`;", source, re.DOTALL).group(1)
+    assert "\\" not in glue, "the embedded Python must not contain backslashes"
+
+
+def test_viewer_pins_an_exact_3dmol_version() -> None:
+    html = PAGE.read_text(encoding="utf-8")
+    assert re.search(r"3dmol@\d+\.\d+\.\d+/build/3Dmol-min\.js", html), (
+        "index.html must load a pinned 3Dmol build"
+    )

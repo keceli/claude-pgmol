@@ -82,6 +82,15 @@
            font-size: .82rem; color: var(--muted); }
   a { color: var(--accent); }
   code { font-family: var(--mono); font-size: .9em; }
+  #viewer { position: relative; width: 100%; height: 26rem; margin-top: .75rem;
+            border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+            background: var(--bg); }
+  @media (max-width: 40rem) { #viewer { height: 18rem; } }
+  #viewer-panel[hidden] { display: none; }
+  #viewer-panel label { cursor: pointer; user-select: none; }
+  .muted-note { color: var(--muted); font-size: .82rem; margin: .6rem 0 0; }
+  .swatch { display: inline-block; width: .7rem; height: .7rem; border-radius: 2px;
+            vertical-align: -1px; margin-right: .25rem; }
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden;
                      clip: rect(0 0 0 0); white-space: nowrap; }
 </style>
@@ -131,6 +140,18 @@
     <div id="result-body"></div>
   </div>
 
+  <div class="panel" id="viewer-panel" hidden>
+    <div class="row" style="justify-content:space-between;align-items:baseline">
+      <h2 style="margin:0">Structure</h2>
+      <div class="row" style="gap:1rem">
+        <label><input type="checkbox" id="show-axes" checked> rotation axes</label>
+        <label><input type="checkbox" id="show-planes" checked> mirror planes</label>
+      </div>
+    </div>
+    <div id="viewer"></div>
+    <p id="legend" class="muted-note"></p>
+  </div>
+
   <footer>
     <span id="build">pgmol</span> ·
     <a href="https://github.com/keceli/claude-pgmol">source on GitHub</a> ·
@@ -138,6 +159,8 @@
     <a href="https://pyodide.org/">Pyodide</a> (CPython 3.13 + NumPy, WebAssembly).
   </footer>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/3dmol@2.5.5/build/3Dmol-min.js"
+        crossorigin="anonymous" onerror="window.__no3dmol=true"></script>
 <script src="app.js"></script>
 </body>
 </html>
