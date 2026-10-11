@@ -1,0 +1,105 @@
+name: Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+# Allow one deployment at a time; never cancel one midway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build the wheel the page will run
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Assemble the site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp web/index.html web/app.js web/worker.js site/
+          cp -r core_xyz challenge_xyz site/
+          cp dist/pgmol-*.whl site/
+          python - <<'PY'
+          import json, pathlib, os
+
+          site = pathlib.Path("site")
+          wheel = next(site.glob("pgmol-*.whl")).name
+          version = wheel.split("-")[1]
+          commit = os.environ["GITHUB_SHA"][:7]
+          (site / "build.json").write_text(
+              json.dumps({"version": version, "commit": commit, "wheel": wheel}, indent=2)
+          )
+
+          # The picker lists the real test fixtures. Each file name ends in the
+          # Schoenflies label its contents must produce, which the page shows as
+          # a separate cross-check -- never as the answer.
+          groups = []
+          for directory, label in (("core_xyz", "Core fixtures"),
+                                   ("challenge_xyz", "Challenge fixtures")):
+              items = []
+              for path in sorted((site / directory).glob("*.xyz")):
+                  name, _, expected = path.stem.rpartition("_")
+                  items.append({"path": f"{directory}/{path.name}",
+                                "name": name, "expected": expected})
+              groups.append({"label": f"{label} ({len(items)})", "items": items})
+          (site / "examples.json").write_text(json.dumps(groups, indent=2))
+          print(f"{wheel}  @{commit}  "
+                f"{sum(len(g['items']) for g in groups)} examples")
+          PY
+
+      - name: Check the site is complete
+        run: |
+          set -euo pipefail
+          for f in index.html app.js worker.js build.json examples.json; do
+            test -s "site/$f" || { echo "::error::site/$f missing or empty"; exit 1; }
+          done
+          test -n "$(ls site/pgmol-*.whl)" || { echo "::error::wheel missing"; exit 1; }
+          python -c "
+          import json, pathlib
+          site = pathlib.Path('site')
+          build = json.loads((site / 'build.json').read_text())
+          assert (site / build['wheel']).is_file(), 'build.json names a missing wheel'
+          groups = json.loads((site / 'examples.json').read_text())
+          total = 0
+          for group in groups:
+              for item in group['items']:
+                  assert (site / item['path']).is_file(), item['path']
+                  total += 1
+          assert total == 91, f'expected 91 fixtures, found {total}'
+          print('site OK:', build, total, 'examples')
+          "
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
