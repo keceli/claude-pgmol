@@ -34,6 +34,9 @@ jobs:
       - name: Show resolved versions
         run: python -m pip freeze
 
+      - name: Type-check against this interpreter's resolved NumPy
+        run: mypy --strict src/pgmol
+
       - name: Run the test suite with coverage
         run: >
           python -m pytest
@@ -108,5 +111,4 @@ jobs:
         run: ruff check src tests
       - name: ruff format
         run: ruff format --check src tests
-      - name: mypy
-        run: mypy --strict src/pgmol
+

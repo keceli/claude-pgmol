@@ -338,3 +338,79 @@ def test_empty_label_is_a_value_error() -> None:
 
     with pytest.raises(ValueError, match="unrecognised"):
         expected_order("")
+
+
+# --- findings from the pull-request review --------------------------------
+
+
+def test_linear_shortcut_respects_operation_displacement() -> None:
+    """A rotation moves an atom twice its distance from the axis.
+
+    The bent triatomic below sits 0.08 A off its own best-fit axis, so the
+    half-turn every linear group contains would displace it by 0.16 A --
+    more than the 0.1 A tolerance.  Calling it linear claimed an infinite
+    group whose own operations the matcher rejects.
+    """
+    symbols, coordinates = ("H", "O", "H"), [[-1, 0, 0], [0, 0.12, 0], [1, 0, 0]]
+    centred = np.asarray(coordinates, float)
+    centred = centred - centred.mean(axis=0)
+    axis = np.linalg.svd(centred)[2][0]
+    perpendicular = centred - np.outer(centred @ axis, axis)
+    offset = float(np.max(np.linalg.norm(perpendicular, axis=1)))
+    half_turn = centred @ (2 * np.outer(axis, axis) - np.eye(3)).T
+    displacement = float(np.max(np.linalg.norm(half_turn - centred, axis=1)))
+    assert offset == pytest.approx(0.08, abs=1e-9)
+    assert displacement == pytest.approx(2 * offset, abs=1e-9)
+
+    assert analyze(Molecule(symbols, coordinates), tolerance=0.1).label == "C2v"
+    # Only once the tolerance covers the full displacement is it linear, and
+    # then inversion is within tolerance too, so the group is Dinfh.
+    assert analyze(Molecule(symbols, coordinates), tolerance=0.2).label == "Dinfh"
+    assert analyze(Molecule(symbols, coordinates), tolerance=0.15).label == "C2v"
+
+
+@pytest.mark.parametrize(
+    ("stem", "tolerance"),
+    [("H2O_C2v", 0.5), ("O3_C2v", 0.5), ("H2O2_C2", 0.5), ("ClHO_Cs", 0.5)],
+)
+def test_a_loose_tolerance_no_longer_flattens_bent_fixtures(
+    stem: str, tolerance: float
+) -> None:
+    expected = stem.rsplit("_", 1)[-1]
+    molecule = read_xyz(Path("core_xyz") / f"{stem}.xyz")
+    assert analyze(molecule, tolerance=tolerance).label == expected
+
+
+@pytest.mark.parametrize("stem", ["CO2_Dinfh", "C2H2_Dinfh", "CHN_Cinfv", "CO_Cinfv"])
+def test_genuinely_linear_molecules_are_still_linear(stem: str) -> None:
+    expected = stem.rsplit("_", 1)[-1]
+    assert analyze(read_xyz(Path("core_xyz") / f"{stem}.xyz")).label == expected
+
+
+def test_molecule_canonicalises_and_validates_its_symbols() -> None:
+    """Building a Molecule directly used to bypass element checking.
+
+    ``("H", "h")`` was treated as two different elements, so the same atoms
+    gave Cinfv through the constructor and Dinfh through the documented
+    entry point.
+    """
+    coordinates = [[0, 0, -1], [0, 0, 1]]
+    assert Molecule(("H", "h"), coordinates).symbols == ("H", "H")
+    assert analyze(Molecule(("H", "h"), coordinates)).label == "Dinfh"
+    assert point_group_from_coordinates(["H", "h"], coordinates) == "Dinfh"
+    assert Molecule(("1", "H"), coordinates).symbols == ("H", "H")
+
+
+@pytest.mark.parametrize("symbol", ["Xx", "", "119", "²"])
+def test_molecule_rejects_unknown_elements(symbol: str) -> None:
+    with pytest.raises(ValueError, match="unknown element symbol"):
+        Molecule((symbol,), [[0.0, 0.0, 0.0]])
+
+
+def test_both_entry_points_agree_on_sloppy_symbols() -> None:
+    coordinates = [[0, 0, 0], [0.757, 0, 0.587], [-0.757, 0, 0.587]]
+    assert (
+        analyze(Molecule(("o", "h", "H"), coordinates)).label
+        == point_group_from_coordinates(["o", "h", "H"], coordinates)
+        == "C2v"
+    )

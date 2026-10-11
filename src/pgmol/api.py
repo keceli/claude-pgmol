@@ -154,12 +154,13 @@ def analyze(molecule: Molecule, tolerance: float = DEFAULT_TOLERANCE) -> Symmetr
     blocks = element_blocks(molecule.symbols)
     effective = _effective_tolerance(coords, blocks, tol)
 
-    # The collinearity test uses the same tolerance as atom matching.  With
-    # the requested value instead, the linear short-circuit was more
-    # permissive than the rest of the pipeline and returned an infinite
-    # group -- without verifying a single operation -- for geometries the
-    # operation search would never have called linear.
-    if is_linear(coords, effective):
+    # A linear molecule's group contains rotation by every angle about the
+    # axis, and the half-turn moves an atom lying d from the axis by 2d.
+    # The tolerance is a bound on how far an operation may displace an
+    # atom, so the admissible distance to the axis is half of it; testing d
+    # against the tolerance itself let the shortcut claim an infinite group
+    # whose own operations the matcher would have rejected.
+    if is_linear(coords, effective / 2.0):
         matcher = StructureMatcher(coords, blocks, effective)
         label = "Dinfh" if matcher.matches(INVERSION) else "Cinfv"
         return SymmetryAnalysis(label, tol, effective, None, (), True)

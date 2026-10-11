@@ -129,11 +129,12 @@ the molecular radius, so tolerances below roughly `1e-8` times that radius
 stop being meaningful — but the identity is always matched, so the result
 is never an impossible group of order zero.
 
-Collinearity is tested against the same (capped) tolerance, so the linear
-short-circuit is never more permissive than the operation search that
-follows it. A molecule bent by less than that tolerance is reported as
-linear — at a tolerance comparable to its own bond lengths, any molecule
-eventually is.
+Collinearity is held to the same displacement rule. A linear group
+contains rotation by every angle about the axis, and the half-turn moves an
+atom lying `d` from the axis by `2d`, so a molecule counts as linear only
+while every atom is within *half* the tolerance of one line. Testing `d`
+against the whole tolerance let the shortcut report an infinite group whose
+own operations the matcher would then reject.
 
 ## Supported labels
 
@@ -220,7 +221,9 @@ $ mypy --strict src/pgmol
 ```
 
 The package ships `py.typed`, and the annotations are checked under
-`mypy --strict` in CI.
+`mypy --strict` in CI — in every matrix job, not just one, because the
+NumPy stubs differ between releases and a construction can type-check
+against two versions while failing a third in between.
 
 The suite covers:
 

@@ -142,7 +142,7 @@ def _axis_from_projector(projector: FloatArray) -> FloatArray:
     """Extract the unit vector ``u`` from a rank-one projector ``u u^T``."""
     column = int(np.argmax(np.linalg.norm(projector, axis=0)))
     vector = projector[:, column]
-    return vector / np.linalg.norm(vector)
+    return np.asarray(vector / np.linalg.norm(vector), dtype=np.float64)
 
 
 def _matrix_order(matrix: FloatArray, atol: float, limit: int) -> int | None:

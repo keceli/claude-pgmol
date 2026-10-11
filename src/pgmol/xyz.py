@@ -57,7 +57,11 @@ class Molecule:
     Attributes
     ----------
     symbols:
-        Canonical IUPAC element symbols, one per atom, in input order.
+        Element symbols, one per atom, in input order.  They are validated
+        and canonicalised on construction, so ``"h"``, ``"H"`` and ``"1"``
+        all become ``"H"`` and an unknown symbol is rejected -- building a
+        molecule directly cannot smuggle in an element the rest of the
+        package would treat as distinct.
     coordinates:
         Read-only ``(natoms, 3)`` float64 array of ångström coordinates.
     comment:
@@ -78,6 +82,12 @@ class Molecule:
         coords = np.array(self.coordinates, dtype=float, copy=True)
         if coords.ndim != 2 or coords.shape[1] != 3:
             raise ValueError(f"coordinates must have shape (natoms, 3), got {coords.shape}")
+        canonical: list[str] = []
+        for index, token in enumerate(self.symbols):
+            symbol = canonical_symbol(str(token))
+            if symbol is None:
+                raise ValueError(f"unknown element symbol {token!r} at index {index}")
+            canonical.append(symbol)
         if len(self.symbols) != coords.shape[0]:
             raise ValueError(
                 f"got {len(self.symbols)} symbols but {coords.shape[0]} coordinate rows"
@@ -94,7 +104,7 @@ class Molecule:
             )
         coords.flags.writeable = False
         object.__setattr__(self, "coordinates", coords)
-        object.__setattr__(self, "symbols", tuple(self.symbols))
+        object.__setattr__(self, "symbols", tuple(canonical))
         _reject_coincident_atoms(coords)
 
     def __eq__(self, other: object) -> bool:
@@ -329,17 +339,11 @@ def molecule_from_coordinates(
         ``(natoms, 3)`` array of finite, physically sized values, or two
         atoms coincide.
     """
-    canonical: list[str] = []
-    for index, token in enumerate(symbols):
-        symbol = canonical_symbol(str(token))
-        if symbol is None:
-            raise XYZFormatError(f"unknown element symbol {token!r} at index {index}")
-        canonical.append(symbol)
     try:
         array = np.asarray(coordinates, dtype=float)
     except (TypeError, ValueError) as exc:
         raise XYZFormatError(f"coordinates must be numeric: {exc}") from exc
     try:
-        return Molecule(symbols=tuple(canonical), coordinates=array)
+        return Molecule(symbols=tuple(str(token) for token in symbols), coordinates=array)
     except ValueError as exc:
         raise XYZFormatError(str(exc)) from exc
