@@ -323,6 +323,14 @@ Limitations: needs WebAssembly, Web Workers and WebGL; large structures are
 slower than the CLI. Infinite groups (`Kh`, `Cinfv`, `Dinfh`) have no finite
 set of elements, so the viewer draws the molecule without an overlay.
 
+## Session replays
+
+This package was built in an AI coding session, archived as an interactive
+replay: **[watch it](https://keceli.github.io/claude-pgmol/traces/)**. The
+replay preserves the failed attempts and debugging as well as the results.
+`agent-traces/` holds the sanitised transcripts and per-session notes; only
+the self-contained HTML replays are published to the site.
+
 ## License
 
 MIT — see `LICENSE`.

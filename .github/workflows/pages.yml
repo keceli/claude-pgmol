@@ -38,6 +38,13 @@ jobs:
           cp web/index.html web/app.js web/worker.js site/
           cp -r core_xyz challenge_xyz site/
           cp dist/pgmol-*.whl site/
+          # Sanitised HTML replays only -- the raw session transcripts stay
+          # in the repository and are never published.
+          mkdir -p site/traces
+          for dir in agent-traces/*/; do
+            slug="$(basename "$dir")"
+            [ -f "$dir/replay.html" ] && cp "$dir/replay.html" "site/traces/$slug.html"
+          done
           python - <<'PY'
           import json, pathlib, os
 
@@ -62,17 +69,44 @@ jobs:
                                 "name": name, "expected": expected})
               groups.append({"label": f"{label} ({len(items)})", "items": items})
           (site / "examples.json").write_text(json.dumps(groups, indent=2))
+
+          # An index for the session replays.
+          traces = sorted((site / "traces").glob("*.html")) if (site / "traces").is_dir() else []
+          rows = "".join(
+              f'<li><a href="{t.name}">{t.stem}</a></li>' for t in traces
+          )
+          (site / "traces" / "index.html").write_text(
+              "<!doctype html><meta charset=utf-8>"
+              "<title>pgmol — session replays</title>"
+              "<meta name=viewport content='width=device-width,initial-scale=1'>"
+              "<style>body{font:16px/1.6 system-ui,sans-serif;max-width:46rem;margin:3rem auto;"
+              "padding:0 1rem;color:#1b1f24;background:#fff}"
+              "@media(prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}}"
+              "a{color:#1f6feb}@media(prefers-color-scheme:dark){a{color:#4493f8}}"
+              "li{margin:.4rem 0;font-family:ui-monospace,monospace}</style>"
+              "<h1>Session replays</h1>"
+              "<p>Interactive replays of the AI coding sessions that built "
+              "<a href='../'>pgmol</a>. Each page is self-contained and makes no "
+              "external requests.</p>"
+              f"<ul>{rows or '<li>none yet</li>'}</ul>"
+              "<p><a href='../'>&larr; back to pgmol</a></p>"
+          ) if traces else None
           print(f"{wheel}  @{commit}  "
-                f"{sum(len(g['items']) for g in groups)} examples")
+                f"{sum(len(g['items']) for g in groups)} examples  "
+                f"{len(traces)} replay(s)")
           PY
 
       - name: Check the site is complete
         run: |
           set -euo pipefail
+          test -s site/traces/index.html || { echo "::error::replay index missing"; exit 1; }
           for f in index.html app.js worker.js build.json examples.json; do
             test -s "site/$f" || { echo "::error::site/$f missing or empty"; exit 1; }
           done
           test -n "$(ls site/pgmol-*.whl)" || { echo "::error::wheel missing"; exit 1; }
+          if ls site/*.jsonl site/traces/*.jsonl >/dev/null 2>&1; then
+            echo "::error::a raw transcript reached the published site"; exit 1
+          fi
           python -c "
           import json, pathlib
           site = pathlib.Path('site')
